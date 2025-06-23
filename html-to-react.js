@@ -14,7 +14,7 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const extractRenderedHTML = require('./src/extractors/extractHTMLWithPuppeteer');
 const extractStylesWithPuppeteer = require('./src/extractors/extractStylesWithPuppeteer');
-const { convertHTMLtoJSX, generateCSSFromVars, cssVarMap } = require('./src/converters/convertHTMLtoJSX');
+const { convertHTMLtoJSX, generateCSSFromVars, cssVarMap, getImageImports } = require('./src/converters/convertHTMLtoJSX');
 const { setupTailwind, fixCssLayerDirectives } = require('./scripts/setupTailwind');
 
 async function convertToReactComponent(url, options = {}) {
@@ -55,6 +55,9 @@ async function convertToReactComponent(url, options = {}) {
     
     // Convert HTML to JSX using your converter
     const jsxContent = convertHTMLtoJSX(renderedHTML);
+    
+    // Get image imports generated during conversion
+    const imageImports = getImageImports();
     
     // 4. Create a complete React component with style imports
     const styleImports = [];
@@ -125,9 +128,10 @@ async function convertToReactComponent(url, options = {}) {
       console.log(`✅ Added Tailwind CSS import to component`);
     }
     
+    // Add image imports at the start of the component
     const componentCode = `
 import React from 'react';
-${styleImports.join('\n')}
+${imageImports ? imageImports + '\n' : ''}${styleImports.join('\n')}
 
 export default function ${componentName}() {
   return (
@@ -139,9 +143,15 @@ ${jsxContent}
     fs.writeFileSync(jsxOutputPath, componentCode);
     console.log(`✅ React component saved to: ${jsxOutputPath}`);
     
+    // 7. Log information about image imports
+    if (imageImports) {
+      const imageImportCount = imageImports.split('\n').length;
+      console.log(`✅ Added ${imageImportCount} image import${imageImportCount !== 1 ? 's' : ''} for Webpack bundling`);
+    }
+    
     console.log(`\n🎉 Conversion process complete!\n`);
     
-    // 7. Create a React app if requested
+    // 8. Create a React app if requested
     if (createReactApp) {
       await createReactProject(componentName, reactAppName, {
         componentPath: jsxOutputPath,

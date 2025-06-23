@@ -117,26 +117,81 @@ function isBooleanValue(value) {
   return lower === 'true' || lower === 'false' || lower === '';
 }
 
+// Replace the Set with a Map to track image imports
+let imageImportsMap = new Map();
+
 /**
- * Convert absolute paths to relative paths for HTML image sources
+ * Convert absolute paths to import variables for HTML image sources
  * @param {string} src - The source attribute value
- * @returns {string} - Fixed source path
+ * @returns {string} - Either an import variable reference or the original src
  */
 function fixHtmlImagePath(src) {
   if (!src) return src;
   
-  // Check if it's an absolute path to front/assets or similar
+  // Skip data URLs and external URLs
+  if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
+    return src;
+  }
+  
+  let filename;
+  
+  // Check if it's an absolute path
   if (src.startsWith('/')) {
     // Extract the filename from the path
-    const filename = src.split('/').pop();
+    filename = src.split('/').pop();
+  } else if (src.includes('images-flat/')) {
+    // Extract filename from relative path to images-flat
+    filename = src.split('images-flat/').pop();
+  } else {
+    // For other relative paths that might point to images
+    const parts = src.split('/');
+    filename = parts[parts.length - 1];
+  }
+  
+  // Check if it's an image file by extension
+  if (filename && /\.(svg|png|jpg|jpeg|gif|webp|avif)$/i.test(filename)) {
+    let importName;
     
-    // Check if it's an image file by extension
-    if (/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i.test(filename)) {
-      return `../styles/images-flat/${filename}`;
+    // Check if we've already created an import for this filename
+    if (imageImportsMap.has(filename)) {
+      importName = imageImportsMap.get(filename);
+    } else {
+      // Create an import variable name from the filename
+      importName = filename
+        .replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '')  // Remove extension
+        .replace(/[^a-zA-Z0-9]/g, '_')                       // Replace non-alphanumeric with underscore
+        .replace(/^[0-9]/, 'img_$&');                        // Ensure it doesn't start with a number
+      
+      // Add to the map of images to import
+      imageImportsMap.set(filename, importName);
     }
+    
+    // Return the import variable reference
+    return `{${importName}}`;
   }
   
   return src;
+}
+
+/**
+ * Reset the image imports tracking before each conversion
+ */
+function resetImageImports() {
+  imageImportsMap = new Map();
+}
+
+/**
+ * Get the unique list of image imports as import statements
+ * @returns {string} - Import statements for all images
+ */
+function getImageImports() {
+  if (imageImportsMap.size === 0) return '';
+  
+  return Array.from(imageImportsMap.entries())
+    .map(([filename, importName]) => 
+      `import ${importName} from '../styles/images-flat/${filename}';`
+    )
+    .join('\n');
 }
 
 /**
@@ -219,7 +274,11 @@ function convertAttributes(attrs) {
       attributeValue = fixHtmlImagePath(value);
     }
 
-    if (booleanAttributes.has(keyLower)) {
+    // Check if the attribute value contains curly braces (likely a React variable)
+    if (typeof attributeValue === 'string' && attributeValue.startsWith('{') && attributeValue.endsWith('}')) {
+      // Output without quotes for JSX expressions
+      jsx += ` ${jsxKey}=${attributeValue}`;
+    } else if (booleanAttributes.has(keyLower)) {
       if (value === "" || value === keyLower || value === true) {
         jsx += ` ${jsxKey}={true}`;
       } else if (value === "false" || value === false) {
@@ -354,6 +413,9 @@ Object.entries(svgAttributes).forEach(([key, value]) => {
  * @returns {string} - JSX output string
  */
 function convertHTMLtoJSX(html) {
+  // Reset image imports before each conversion
+  resetImageImports();
+  
   let output = "";
   const stack = [];
   let inBodyTag = false;
@@ -372,6 +434,11 @@ function convertHTMLtoJSX(html) {
       onopentag(name, attributes) {
         // Remove namespace from tag name (e.g., svg:path -> path)
         const tagName = name.toLowerCase().replace(/^.*?:/, '');
+        
+        // Handle image tags specifically to prepare for imports
+        if (tagName === 'img' && attributes.src) {
+          attributes.src = fixHtmlImagePath(attributes.src);
+        }
         
         // Skip problematic tags for React
         if (skipTags.has(tagName)) {
@@ -534,11 +601,6 @@ function convertHTMLtoJSX(html) {
         jsxAttr = attr.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       }
       return ` ${jsxAttr}={${value.toLowerCase()}}`;
-    })
-    // Fix any absolute paths for images that were missed
-    .replace(/src="\/([^"]+\.(svg|png|jpg|jpeg|gif|webp|avif))"/gi, (match, path) => {
-      const filename = path.split('/').pop();
-      return `src="../styles/images-flat/${filename}"`;
     });
 
   // If body attributes were found, create a wrapper div with those attributes
@@ -553,5 +615,6 @@ function convertHTMLtoJSX(html) {
 module.exports = {
   convertHTMLtoJSX,
   generateCSSFromVars,
-  cssVarMap
+  cssVarMap,
+  getImageImports
 };
