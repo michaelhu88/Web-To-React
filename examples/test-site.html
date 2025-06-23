@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Site</title>
+    <style>
+        .bg-white {
+            background-color: white;
+        }
+        .dark\:bg-gray-950 {
+            background-color: #0a0a0a;
+        }
+        .flex {
+            display: flex;
+        }
+        .flex-col {
+            flex-direction: column;
+        }
+        .min-h-dvh {
+            min-height: 100dvh;
+        }
+        .text-black {
+            color: black;
+        }
+        .HomePage {
+            padding: 20px;
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-dvh bg-white dark:bg-gray-950 text-black HomePage">
+    <header>
+        <h1>Test Header</h1>
+        <nav>
+            <ul>
+                <li><a href="#">Home</a></li>
+                <li><a href="#">About</a></li>
+                <li><a href="#">Contact</a></li>
+            </ul>
+        </nav>
+    </header>
+    <main>
+        <section>
+            <h2>Main Content</h2>
+            <p>This is a test page to verify that body attributes are preserved in the React component.</p>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2023 Test Site</p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "name": "extract-styles",
+  "version": "1.0.0",
+  "description": "Extract CSS styles from HTML files",
+  "main": "src/extractors/extractStylesWithPuppeteer.js",
+  "scripts": {
+    "start": "node scripts/extractStyles.js",
+    "extract": "node src/extractors/extractStylesWithPuppeteer.js",
+    "convert": "node html-to-react.js",
+    "landing": "node extract-landing-page.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "puppeteer": "^21.5.0"
+  },
+  "keywords": [
+    "css",
+    "html",
+    "extract",
+    "styles"
+  ],
+  "author": "",
+  "license": "MIT"
+}
