@@ -25,6 +25,7 @@ async function convertToReactComponent(url, options = {}) {
     htmlDir = path.join(outputDir, 'html'),
     stylesDir = path.join(outputDir, 'src/styles'),
     componentsDir = path.join(outputDir, 'src/components'),
+    pagesDir = path.join(outputDir, 'src/pages'),
     createReactApp = false,
     reactAppName = componentName.toLowerCase() + '-app',
     includeComputedStyles = false,
@@ -32,7 +33,7 @@ async function convertToReactComponent(url, options = {}) {
   } = options;
 
   console.log(`🚀 Starting conversion process for: ${url}`);
-  console.log(`📂 Output directories: \n  HTML: ${htmlDir}\n  Styles: ${stylesDir}\n  Components: ${componentsDir}`);
+  console.log(`📂 Output directories: \n  HTML: ${htmlDir}\n  Styles: ${stylesDir}\n  Pages: ${pagesDir}`);
   console.log(`🔧 Options: \n  Include computed styles: ${includeComputedStyles ? 'Yes' : 'No'}\n  Setup Tailwind CSS: ${setupTailwindCSS ? 'Yes' : 'No'}`);
   
   try {
@@ -40,6 +41,7 @@ async function convertToReactComponent(url, options = {}) {
     fs.mkdirSync(htmlDir, { recursive: true });
     fs.mkdirSync(stylesDir, { recursive: true });
     fs.mkdirSync(componentsDir, { recursive: true });
+    fs.mkdirSync(pagesDir, { recursive: true }); // Create pages directory
 
     // 1. Extract HTML
     const htmlOutputPath = path.join(htmlDir, `${componentName}.html`);
@@ -63,7 +65,7 @@ async function convertToReactComponent(url, options = {}) {
     setSanitizedFilenameMap(imageMap);
     
     // 3. Convert to JSX
-    const jsxOutputPath = path.join(componentsDir, `${componentName}.jsx`);
+    const jsxOutputPath = path.join(pagesDir, `${componentName}.jsx`); // Save to pages directory
     console.log(`\n⚛️ Converting HTML to JSX...`);
     
     // Convert HTML to JSX using your converter - use the updated HTML with image paths
@@ -263,16 +265,17 @@ async function createReactProject(componentName, projectName, options = {}) {
     });
     console.log('✅ React app created');
     
-    // Create component directories
+    // Create component and pages directories
     fs.mkdirSync(path.join(projectPath, 'src', 'components'), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, 'src', 'pages'), { recursive: true });
     fs.mkdirSync(path.join(projectPath, 'src', 'styles'), { recursive: true });
     
-    // Copy the component
+    // Copy the component to pages directory
     fs.copyFileSync(
       componentPath,
-      path.join(projectPath, 'src', 'components', `${componentName}.jsx`)
+      path.join(projectPath, 'src', 'pages', `${componentName}.jsx`)
     );
-    console.log(`✅ Component ${componentName}.jsx copied to project`);
+    console.log(`✅ Component ${componentName}.jsx copied to project pages directory`);
     
     // Copy CSS files
     const cssFiles = fs.readdirSync(stylesDir)
@@ -336,10 +339,10 @@ async function createReactProject(componentName, projectName, options = {}) {
       console.log(`✅ Copied images directory`);
     }
     
-    // Update App.js to use the component
+    // Update App.js to use the component from pages directory
     const appJsPath = path.join(projectPath, 'src', 'App.js');
     const appJsContent = `import React from 'react';
-import ${componentName} from './components/${componentName}';
+import ${componentName} from './pages/${componentName}';
 
 function App() {
   return (
@@ -422,7 +425,7 @@ export default App;
         // Update App.js to include DarkModeToggle if it exists
         if (fs.existsSync(path.join(projectPath, 'src', 'components', 'DarkModeToggle.jsx'))) {
           const appJsContent = `import React from 'react';
-import ${componentName} from './components/${componentName}';
+import ${componentName} from './pages/${componentName}';
 import DarkModeToggle from './components/DarkModeToggle';
 import './styles/tailwind.css';
 
@@ -557,7 +560,7 @@ REACT_APP_IMAGES_PATH=./images-flat
       console.log(`✅ Created font-loader.css with ${Object.keys(fontGroups).length} font families`);
       
       // Add an import for font-loader.css to the main component
-      const componentPath = path.join(projectPath, 'src', 'components', `${componentName}.jsx`);
+      const componentPath = path.join(projectPath, 'src', 'pages', `${componentName}.jsx`);
       if (fs.existsSync(componentPath)) {
         let componentContent = fs.readFileSync(componentPath, 'utf8');
         
