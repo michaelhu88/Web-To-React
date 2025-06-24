@@ -39,10 +39,11 @@ function cleanOutputDir() {
   try {
     // Define directories to clean
     const directoriesToClean = [
-      path.join(outputDir, 'styles'),
-      path.join(outputDir, 'html'),
       path.join(outputDir, 'components'),
-      path.join(outputDir, 'public')
+      path.join(outputDir, 'html'),
+      path.join(outputDir, 'public'),
+      path.join(outputDir, 'src'),
+      path.join(outputDir, 'styles')
     ];
     
     // Clean each directory

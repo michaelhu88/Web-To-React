@@ -119,6 +119,8 @@ function isBooleanValue(value) {
 
 // Replace the Set with a Map to track image imports
 let imageImportsMap = new Map();
+// Store mapping from original URLs to sanitized filenames from extractImages.js
+let sanitizedFilenameMap = {};
 
 /**
  * Convert absolute paths to import variables for HTML image sources
@@ -133,6 +135,28 @@ function fixHtmlImagePath(src) {
     return src;
   }
   
+  // If we have a sanitized filename map and this path is in it, use the sanitized name
+  if (sanitizedFilenameMap && 
+      (sanitizedFilenameMap[src] || 
+       (src.startsWith('/') && sanitizedFilenameMap[src.substring(1)]))) {
+    
+    // Get sanitized filename (try with and without leading slash)
+    const sanitizedFilename = sanitizedFilenameMap[src] || sanitizedFilenameMap[src.substring(1)];
+    
+    // Create an import variable name from the sanitized filename
+    let importName = sanitizedFilename
+      .replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '')  // Remove extension
+      .replace(/[^a-zA-Z0-9]/g, '_')                       // Replace non-alphanumeric with underscore
+      .replace(/^[0-9]/, 'img_$&');                        // Ensure it doesn't start with a number
+    
+    // Add to the map of images to import
+    imageImportsMap.set(sanitizedFilename, importName);
+    
+    // Return the import variable reference
+    return `{${importName}}`;
+  }
+  
+  // Fall back to the old logic if we don't have a mapping for this image
   let filename;
   
   // Check if it's an absolute path
@@ -178,6 +202,14 @@ function fixHtmlImagePath(src) {
  */
 function resetImageImports() {
   imageImportsMap = new Map();
+}
+
+/**
+ * Set the sanitized filename mapping from extractImages.js
+ * @param {Object} mapping - The mapping from original URLs to sanitized filenames
+ */
+function setSanitizedFilenameMap(mapping) {
+  sanitizedFilenameMap = mapping || {};
 }
 
 /**
@@ -616,5 +648,6 @@ module.exports = {
   convertHTMLtoJSX,
   generateCSSFromVars,
   cssVarMap,
-  getImageImports
+  getImageImports,
+  setSanitizedFilenameMap
 };

@@ -4,6 +4,36 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 /**
+ * Sanitize a filename by removing invalid characters for file systems and react imports
+ * @param {string} name - The original filename
+ * @returns {string} - Sanitized filename
+ */
+function sanitizeFilename(name) {
+  try {
+    // Try to decode percent-encoded sequences first
+    let decoded = decodeURIComponent(name);
+    
+    // Replace spaces and special characters with underscores
+    // Keep only alphanumeric chars, dots, hyphens, and underscores
+    let sanitized = decoded.replace(/[^a-zA-Z0-9._-]/g, '_');
+    
+    // Ensure it doesn't start with a number or dot (invalid import)
+    if (/^[0-9.]/.test(sanitized)) {
+      sanitized = `img_${sanitized}`;
+    }
+    
+    return sanitized;
+  } catch (error) {
+    // If decoding fails, just sanitize the original
+    let sanitized = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (/^[0-9.]/.test(sanitized)) {
+      sanitized = `img_${sanitized}`;
+    }
+    return sanitized;
+  }
+}
+
+/**
  * Extracts images from HTML and CSS content, downloads them,
  * and rewrites the references to point to local files
  * 
@@ -90,8 +120,8 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
   // 3. Download images and rewrite URLs
   console.log(`📥 Downloading ${imageUrls.size} images...`);
   
-  // Create mapping for original path to flat filename
-  const filenameMap = new Map();
+  // Create mapping from original URL to sanitized filename
+  const urlToSanitizedMap = new Map();
   
   const downloadPromises = Array.from(imageUrls).map(async imageUrl => {
     try {
@@ -116,7 +146,7 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
       
       // Get URL pathname
       const urlPath = new URL(fullImageUrl).pathname;
-      const originalFilename = path.basename(urlPath);
+      let originalFilename = path.basename(urlPath);
       
       // Skip if filename is empty or just a slash
       if (!originalFilename || originalFilename === '/') {
@@ -124,24 +154,29 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
         return;
       }
       
-      // For the flat directory structure, ensure unique filenames
-      // Use path information to create a unique name if needed
-      let flatFilename = originalFilename;
+      // For potential collisions, create unique filenames using path info
       const pathDirname = path.dirname(urlPath).replace(/^\//, ''); // Remove leading slash
       
-      // If this filename already exists but points to a different path, make it unique
-      if (filenameMap.has(flatFilename) && filenameMap.get(flatFilename) !== urlPath) {
+      // Check if this filename already exists for a different URL
+      const existingUrl = Array.from(urlToSanitizedMap.entries())
+        .find(([_, name]) => name === originalFilename);
+      
+      if (existingUrl && existingUrl[0] !== imageUrl) {
         // Create a unique filename by prepending a hash of the path
         const pathHash = Buffer.from(pathDirname).toString('hex').substring(0, 8);
         const extname = path.extname(originalFilename);
         const basename = path.basename(originalFilename, extname);
-        flatFilename = `${basename}-${pathHash}${extname}`;
+        originalFilename = `${basename}-${pathHash}${extname}`;
       }
       
-      filenameMap.set(flatFilename, urlPath);
+      // Sanitize the filename for safe React usage
+      const sanitizedFilename = sanitizeFilename(originalFilename);
+      
+      // Store the mapping
+      urlToSanitizedMap.set(imageUrl, sanitizedFilename);
       
       // Download to flat directory only
-      const flatPath = path.join(imagesFlatDir, flatFilename);
+      const flatPath = path.join(imagesFlatDir, sanitizedFilename);
       
       // Download image file
       const response = await axios({
@@ -159,12 +194,13 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
       
       // Write to flat directory only
       fs.writeFileSync(flatPath, response.data);
-      console.log(`✅ Downloaded image: ${flatFilename}`);
+      console.log(`✅ Downloaded image: ${sanitizedFilename}`);
       
       // Add to list of processed images - now with just flat path
       processedImages.push({
         originalUrl: imageUrl,
-        flatPath: `images-flat/${flatFilename}` // Use only flat path for references
+        flatPath: `images-flat/${sanitizedFilename}`, // Use sanitized filename
+        sanitizedFilename
       });
       
     } catch (err) {
@@ -231,10 +267,12 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
   });
   
   console.log(`🎉 Image extraction complete. Downloaded ${processedImages.length} images.`);
+  
   return { 
     processedImages, 
     updatedHtml,
-    imagesFlatDirName: 'images-flat' // Return the flat directory name for reference
+    imagesFlatDirName: 'images-flat', // Return the flat directory name for reference
+    imageMap: Object.fromEntries(urlToSanitizedMap) // Return mapping of URLs to sanitized filenames for JSX
   };
 }
 

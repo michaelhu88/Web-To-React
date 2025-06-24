@@ -14,8 +14,9 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const extractRenderedHTML = require('./src/extractors/extractHTMLWithPuppeteer');
 const extractStylesWithPuppeteer = require('./src/extractors/extractStylesWithPuppeteer');
-const { convertHTMLtoJSX, generateCSSFromVars, cssVarMap, getImageImports } = require('./src/converters/convertHTMLtoJSX');
+const { convertHTMLtoJSX, generateCSSFromVars, cssVarMap, getImageImports, setSanitizedFilenameMap } = require('./src/converters/convertHTMLtoJSX');
 const { setupTailwind, fixCssLayerDirectives } = require('./scripts/setupTailwind');
+const { extractImages } = require('./src/extractors/extractImages');
 
 async function convertToReactComponent(url, options = {}) {
   const {
@@ -49,12 +50,24 @@ async function convertToReactComponent(url, options = {}) {
     console.log(`\n🎨 Extracting CSS styles...`);
     const extractedStyles = await extractStylesWithPuppeteer(url, stylesDir);
     
+    // 2b. Extract and download images 
+    console.log(`\n🖼️ Extracting and downloading images...`);
+    const { processedImages, updatedHtml, imageMap } = await extractImages(
+      renderedHTML, 
+      extractedStyles.cssFiles, 
+      url, 
+      stylesDir
+    );
+    
+    // Pass the sanitized filename mapping to the JSX converter
+    setSanitizedFilenameMap(imageMap);
+    
     // 3. Convert to JSX
     const jsxOutputPath = path.join(componentsDir, `${componentName}.jsx`);
     console.log(`\n⚛️ Converting HTML to JSX...`);
     
-    // Convert HTML to JSX using your converter
-    const jsxContent = convertHTMLtoJSX(renderedHTML);
+    // Convert HTML to JSX using your converter - use the updated HTML with image paths
+    const jsxContent = convertHTMLtoJSX(updatedHtml || renderedHTML);
     
     // Get image imports generated during conversion
     const imageImports = getImageImports();
