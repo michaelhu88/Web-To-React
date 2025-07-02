@@ -12,11 +12,8 @@
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const extractRenderedHTML = require('./src/extractors/extractHTMLWithPuppeteer');
-const extractStylesWithPuppeteer = require('./src/extractors/extractStylesWithPuppeteer');
-const { convertHTMLtoJSX, generateCSSFromVars, cssVarMap, getImageImports, setSanitizedFilenameMap } = require('./src/converters/convertHTMLtoJSX');
+const processRoute = require('./src/processors/processRoute');
 const { setupTailwind, fixCssLayerDirectives } = require('./scripts/setupTailwind');
-const { extractImages } = require('./src/extractors/extractImages');
 
 async function convertToReactComponent(url, options = {}) {
   const {
@@ -37,66 +34,19 @@ async function convertToReactComponent(url, options = {}) {
   console.log(`🔧 Options: \n  Include computed styles: ${includeComputedStyles ? 'Yes' : 'No'}\n  Setup Tailwind CSS: ${setupTailwindCSS ? 'Yes' : 'No'}`);
   
   try {
-    // Create output directories
-    fs.mkdirSync(htmlDir, { recursive: true });
-    fs.mkdirSync(stylesDir, { recursive: true });
-    fs.mkdirSync(componentsDir, { recursive: true });
-    fs.mkdirSync(pagesDir, { recursive: true }); // Create pages directory
-
-    // 1. Extract HTML
-    const htmlOutputPath = path.join(htmlDir, `${componentName}.html`);
-    console.log(`\n📄 Extracting rendered HTML...`);
-    const renderedHTML = await extractRenderedHTML(url, htmlOutputPath);
+    // Process the route using our modular processor (handles steps 1-5)
+    const result = await processRoute(url, componentName, false, false, outputDir);
     
-    // 2. Extract CSS
-    console.log(`\n🎨 Extracting CSS styles...`);
-    const extractedStyles = await extractStylesWithPuppeteer(url, stylesDir);
+    // Get the component path from the processor result
+    const jsxOutputPath = result.componentPath;
     
-    // 2b. Extract and download images 
-    console.log(`\n🖼️ Extracting and downloading images...`);
-    const { processedImages, updatedHtml, imageMap } = await extractImages(
-      renderedHTML, 
-      extractedStyles.cssFiles, 
-      url, 
-      stylesDir
-    );
+    // Log success message
+    console.log(`\n🎉 Basic conversion process complete!`);
     
-    // Pass the sanitized filename mapping to the JSX converter
-    setSanitizedFilenameMap(imageMap);
+    // Handle any additional processing specific to html-to-react.js
     
-    // 3. Convert to JSX
-    const jsxOutputPath = path.join(pagesDir, `${componentName}.jsx`); // Save to pages directory
-    console.log(`\n⚛️ Converting HTML to JSX...`);
-    
-    // Convert HTML to JSX using your converter - use the updated HTML with image paths
-    const jsxContent = convertHTMLtoJSX(updatedHtml || renderedHTML);
-    
-    // Get image imports generated during conversion
-    const imageImports = getImageImports();
-    
-    // 4. Create a complete React component with style imports
-    const styleImports = [];
-    
-    // Add font-faces CSS first (if it exists) to ensure fonts are defined before use
-    const fontFacesCssPath = path.join(stylesDir, "font-faces.css");
-    if (fs.existsSync(fontFacesCssPath)) {
-      styleImports.push(`import '../styles/font-faces.css';`);
-      console.log(`✅ Adding font-faces.css import`);
-    }
-    
-    // Add imports for inline and computed styles
-    const inlineCssPath = path.join(stylesDir, "App.css");
-    if (fs.existsSync(inlineCssPath)) {
-      styleImports.push(`import '../styles/App.css';`);
-    }
-    
-    // Only include computed styles if explicitly requested
-    if (includeComputedStyles) {
-      const computedCssPath = path.join(stylesDir, "computed.css");
-      if (fs.existsSync(computedCssPath)) {
-        styleImports.push(`import '../styles/computed.css';`);
-      }
-    } else {
+    // Handle computed styles
+    if (!includeComputedStyles) {
       console.log(`ℹ️ Skipping computed styles as per configuration`);
       // Optionally rename the file to make it clear it's not being used
       const computedCssPath = path.join(stylesDir, "computed.css");
@@ -104,29 +54,6 @@ async function convertToReactComponent(url, options = {}) {
         fs.renameSync(computedCssPath, path.join(stylesDir, "computed.css.unused"));
         console.log(`ℹ️ Renamed computed.css to computed.css.unused`);
       }
-    }
-    
-    // Add imports for external stylesheets
-    if (fs.existsSync(stylesDir)) {
-      const externalStyleFiles = fs.readdirSync(stylesDir)
-        .filter(file => file.endsWith('.css') && 
-          file !== 'App.css' && 
-          file !== 'computed.css' && 
-          file !== 'computed.css.unused' &&
-          file !== 'font-faces.css');
-      
-      externalStyleFiles.forEach(file => {
-        styleImports.push(`import '../styles/${file}';`);
-      });
-    }
-    
-    // 5. Generate CSS for custom variables if needed
-    if (Object.keys(cssVarMap).length > 0) {
-      const customVarsCss = generateCSSFromVars(cssVarMap);
-      const customCssPath = path.join(stylesDir, "custom-vars.css");
-      fs.writeFileSync(customCssPath, customVarsCss);
-      styleImports.push(`import '../styles/custom-vars.css';`);
-      console.log(`✅ Saved custom CSS variables to custom-vars.css`);
     }
     
     // 6. Setup Tailwind CSS if requested
@@ -139,29 +66,18 @@ async function convertToReactComponent(url, options = {}) {
       fixCssLayerDirectives(stylesDir);
       
       // Add Tailwind import to the component
-      styleImports.unshift(`import '../styles/tailwind.css';`);
-      console.log(`✅ Added Tailwind CSS import to component`);
-    }
-    
-    // Add image imports at the start of the component
-    const componentCode = `
-import React from 'react';
-${imageImports ? imageImports + '\n' : ''}${styleImports.join('\n')}
-
-export default function ${componentName}() {
-  return (
-${jsxContent}
-  );
-}
-`;
-    
-    fs.writeFileSync(jsxOutputPath, componentCode);
-    console.log(`✅ React component saved to: ${jsxOutputPath}`);
-    
-    // 7. Log information about image imports
-    if (imageImports) {
-      const imageImportCount = imageImports.split('\n').length;
-      console.log(`✅ Added ${imageImportCount} image import${imageImportCount !== 1 ? 's' : ''} for Webpack bundling`);
+      const componentPath = jsxOutputPath;
+      let componentContent = fs.readFileSync(componentPath, 'utf8');
+      
+      // Add tailwind import if not already present
+      if (!componentContent.includes('tailwind.css')) {
+        componentContent = componentContent.replace(
+          /import React from ['"]react['"];/,
+          `import React from 'react';\nimport '../styles/tailwind.css';`
+        );
+        fs.writeFileSync(componentPath, componentContent);
+        console.log(`✅ Added Tailwind CSS import to component`);
+      }
     }
     
     console.log(`\n🎉 Conversion process complete!\n`);
@@ -171,7 +87,6 @@ ${jsxContent}
       await createReactProject(componentName, reactAppName, {
         componentPath: jsxOutputPath,
         stylesDir,
-        styleImports,
         includeComputedStyles,
         setupTailwindCSS
       });
@@ -180,13 +95,385 @@ ${jsxContent}
     return {
       componentPath: jsxOutputPath,
       stylesDir,
-      htmlPath: htmlOutputPath
+      htmlPath: result.htmlPath
     };
     
   } catch (error) {
     console.error(`❌ Error: ${error.message}`);
     throw error;
   }
+}
+
+/**
+ * Process multiple routes from a routes.json file
+ * @param {string} outputDir - Directory containing the routes.json file and where output will be saved
+ * @param {object} options - Additional options for processing
+ * @returns {Promise<Array>} - Array of processed component results
+ */
+async function processRoutesFromJson(outputDir = path.resolve(__dirname, 'output'), options = {}) {
+  const routesFilePath = path.join(outputDir, 'routes.json');
+  
+  if (!fs.existsSync(routesFilePath)) {
+    console.error(`❌ routes.json not found in ${outputDir}`);
+    throw new Error(`routes.json not found in ${outputDir}`);
+  }
+  
+  try {
+    // Read and parse routes.json
+    const routesData = JSON.parse(fs.readFileSync(routesFilePath, 'utf8'));
+    
+    if (!Array.isArray(routesData) || routesData.length === 0) {
+      console.error('❌ routes.json must contain a non-empty array of route objects');
+      throw new Error('Invalid routes.json format');
+    }
+    
+    console.log(`📋 Found ${routesData.length} routes in routes.json`);
+    
+    // Store createReactApp option and then disable it temporarily 
+    // to prevent creating multiple React apps during route processing
+    const shouldCreateReactApp = options.createReactApp;
+    const tempOptions = { ...options, createReactApp: false };
+    
+    // Process each route
+    const results = [];
+    
+    for (let i = 0; i < routesData.length; i++) {
+      const route = routesData[i];
+      
+      if (!route.url || !route.componentName) {
+        console.warn(`⚠️ Skipping invalid route at index ${i}: missing url or componentName`);
+        continue;
+      }
+      
+      console.log(`\n📄 Processing route ${i + 1}/${routesData.length}: ${route.url} => ${route.componentName}`);
+      
+      // Set options for this specific route
+      const routeOptions = { ...tempOptions, componentName: route.componentName };
+      
+      try {
+        const result = await convertToReactComponent(route.url, routeOptions);
+        results.push(result);
+      } catch (error) {
+        console.error(`❌ Error processing route ${route.url}: ${error.message}`);
+        // Continue with next route even if this one failed
+      }
+    }
+    
+    console.log(`\n✅ Processed ${results.length}/${routesData.length} routes successfully`);
+    
+    // Create a single React app with all components if requested
+    if (shouldCreateReactApp && results.length > 0) {
+      console.log(`\n📦 Creating a single React app with all ${results.length} components`);
+      
+      // Use the first component as the main one
+      const mainComponentName = routesData[0].componentName;
+      const reactAppName = options.reactAppName || mainComponentName.toLowerCase() + '-app';
+      
+      await createMultiComponentReactProject(results, mainComponentName, reactAppName, {
+        stylesDir: path.join(outputDir, 'src/styles'),
+        includeComputedStyles: options.includeComputedStyles,
+        setupTailwindCSS: options.setupTailwindCSS
+      });
+    }
+    
+    return results;
+  } catch (error) {
+    console.error(`❌ Error processing routes: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Creates a complete React app with multiple extracted components
+ * @param {Array} componentResults - Results from processing multiple routes
+ * @param {string} mainComponentName - Name of the main component to use as the home page
+ * @param {string} projectName - Name for the React project 
+ * @param {object} options - Additional options for the React project
+ */
+async function createMultiComponentReactProject(componentResults, mainComponentName, projectName, options = {}) {
+  const {
+    stylesDir,
+    includeComputedStyles = false,
+    setupTailwindCSS = false
+  } = options;
+  
+  const projectPath = path.join(process.cwd(), '..', projectName);
+  
+  console.log(`\n📦 Creating React app in ../${projectName} with multiple components...`);
+  
+  try {
+    // Check if the project directory already exists
+    if (fs.existsSync(projectPath)) {
+      console.error(`\n⚠️ Directory ${projectPath} already exists.`);
+      const userAnswer = await promptUser(`Do you want to overwrite the existing project? (y/n): `);
+      
+      if (userAnswer.toLowerCase() !== 'y') {
+        console.log(`\n❌ React app creation aborted.`);
+        return;
+      }
+    }
+    
+    // Create React app
+    console.log(`\n⚙️ Running create-react-app...`);
+    execSync(`npx create-react-app ${projectName}`, { 
+      stdio: 'inherit', 
+      cwd: path.join(process.cwd(), '..') 
+    });
+    console.log('✅ React app created');
+    
+    // Create pages directory (components will be organized by pages)
+    fs.mkdirSync(path.join(projectPath, 'src', 'pages'), { recursive: true });
+    
+    // Process each component
+    for (const result of componentResults) {
+      const componentName = path.basename(result.componentPath, '.jsx');
+      const pageDir = path.join(projectPath, 'src', 'pages', componentName);
+      
+      // Create page-specific directory
+      fs.mkdirSync(pageDir, { recursive: true });
+      
+      // Create page-specific images and fonts directories
+      fs.mkdirSync(path.join(pageDir, 'images-flat'), { recursive: true });
+      fs.mkdirSync(path.join(pageDir, 'fonts-flat'), { recursive: true });
+      
+      // Read the component file
+      let componentContent = fs.readFileSync(result.componentPath, 'utf8');
+      
+      // Copy the component to page directory as index.jsx
+      const targetPath = path.join(pageDir, 'index.jsx');
+      
+      // Import paths are already correct since assets are in the same folder
+      // No need to update paths - they should already be './images-flat/' and './' formats
+      
+      // Write updated component
+      fs.writeFileSync(targetPath, componentContent);
+      console.log(`✅ Component ${componentName} saved to: ${targetPath}`);
+      
+      // Source directory for this component in local output
+      const sourcePageDir = path.join(__dirname, 'output', 'src', 'pages', componentName);
+      
+      // Copy component-specific CSS file (named after the component)
+      const componentCssPath = path.join(sourcePageDir, `${componentName}.css`);
+      if (fs.existsSync(componentCssPath)) {
+        const targetCssPath = path.join(pageDir, `${componentName}.css`);
+        
+        // Read CSS content - paths should already be correct
+        let cssContent = fs.readFileSync(componentCssPath, 'utf8');
+        
+        fs.writeFileSync(targetCssPath, cssContent);
+        console.log(`✅ CSS file for ${componentName} copied to: ${targetCssPath}`);
+      }
+      
+      // Copy ALL images to this page's images-flat folder
+      const imagesDir = path.join(sourcePageDir, 'images-flat');
+      if (fs.existsSync(imagesDir)) {
+        const imageFiles = fs.readdirSync(imagesDir);
+        imageFiles.forEach(file => {
+          const sourcePath = path.join(imagesDir, file);
+          const targetPath = path.join(pageDir, 'images-flat', file);
+          if (fs.existsSync(sourcePath)) {
+            fs.copyFileSync(sourcePath, targetPath);
+            console.log(`✅ Copied image: ${file} to ${componentName}/images-flat/`);
+          }
+        });
+        console.log(`✅ Copied ${imageFiles.length} images to ${componentName}/images-flat/`);
+      }
+      
+      // Copy ALL fonts to this page's fonts-flat folder
+      const fontsDir = path.join(sourcePageDir, 'fonts-flat');
+      if (fs.existsSync(fontsDir)) {
+        const fontFiles = fs.readdirSync(fontsDir);
+        fontFiles.forEach(file => {
+          const sourcePath = path.join(fontsDir, file);
+          const targetPath = path.join(pageDir, 'fonts-flat', file);
+          if (fs.existsSync(sourcePath)) {
+            fs.copyFileSync(sourcePath, targetPath);
+            console.log(`✅ Copied font: ${file} to ${componentName}/fonts-flat/`);
+          }
+        });
+        console.log(`✅ Copied ${fontFiles.length} fonts to ${componentName}/fonts-flat/`);
+      }
+      
+      // Copy App.css if it exists and is imported by this component
+      if (componentContent.includes(`import './App.css'`)) {
+        const appCssPath = path.join(sourcePageDir, 'App.css');
+        if (fs.existsSync(appCssPath)) {
+          const targetAppCssPath = path.join(pageDir, 'App.css');
+          fs.copyFileSync(appCssPath, targetAppCssPath);
+          console.log(`✅ Copied App.css to: ${targetAppCssPath}`);
+        }
+      }
+      
+      // Copy font-faces.css if it exists and is imported by this component
+      if (componentContent.includes(`import './font-faces.css'`)) {
+        const fontFacesCssPath = path.join(sourcePageDir, 'font-faces.css');
+        if (fs.existsSync(fontFacesCssPath)) {
+          const targetFontFacesCssPath = path.join(pageDir, 'font-faces.css');
+          
+          // Read CSS content - paths should already be correct
+          let fontFacesContent = fs.readFileSync(fontFacesCssPath, 'utf8');
+          
+          fs.writeFileSync(targetFontFacesCssPath, fontFacesContent);
+          console.log(`✅ Copied font-faces.css to: ${targetFontFacesCssPath}`);
+        }
+      }
+      
+      // Copy custom-vars.css if it exists and is imported by this component
+      if (componentContent.includes(`import './custom-vars.css'`)) {
+        const customVarsCssPath = path.join(sourcePageDir, 'custom-vars.css');
+        if (fs.existsSync(customVarsCssPath)) {
+          const targetCustomVarsCssPath = path.join(pageDir, 'custom-vars.css');
+          fs.copyFileSync(customVarsCssPath, targetCustomVarsCssPath);
+          console.log(`✅ Copied custom-vars.css to: ${targetCustomVarsCssPath}`);
+        }
+      }
+    }
+    
+    // Create component list for navigation routes
+    const componentNames = componentResults.map(result => 
+      path.basename(result.componentPath, '.jsx')
+    );
+    
+    // Update App.js to use React Router and page components
+    const appJsPath = path.join(projectPath, 'src', 'App.js');
+    const appJsContent = `import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+${componentNames.map(name => `import ${name} from './pages/${name}';`).join('\n')}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <div className="App">
+        <Routes>
+          <Route path="/" element={<${mainComponentName} />} />
+          ${componentNames.filter(name => name !== mainComponentName)
+            .map(name => `<Route path="/${name.toLowerCase()}" element={<${name} />} />`)
+            .join('\n          ')}
+        </Routes>
+      </div>
+    </BrowserRouter>
+  );
+}
+
+export default App;
+`;
+    
+    fs.writeFileSync(appJsPath, appJsContent);
+    console.log(`✅ Updated App.js with React Router and all components`);
+    
+    // Configure Tailwind CSS if requested
+    if (setupTailwindCSS) {
+      console.log(`\n🌬️ Setting up Tailwind CSS in the React app...`);
+      
+      // Copy Tailwind config files from output directory
+      const tailwindConfigFiles = [
+        'tailwind.config.js',
+        'postcss.config.js',
+        'TAILWIND_SETUP.md'
+      ];
+      
+      tailwindConfigFiles.forEach(file => {
+        const sourcePath = path.join(__dirname, 'output', file);
+        const targetPath = path.join(projectPath, file);
+        
+        if (fs.existsSync(sourcePath)) {
+          fs.copyFileSync(sourcePath, targetPath);
+          console.log(`✅ Copied ${file} to React app`);
+        }
+      });
+      
+      // Create a shared tailwind.css file for the project
+      const tailwindCssPath = path.join(projectPath, 'src', 'tailwind.css');
+      const tailwindCssContent = `@tailwind base;
+@tailwind components;
+@tailwind utilities;`;
+      fs.writeFileSync(tailwindCssPath, tailwindCssContent);
+      console.log(`✅ Created tailwind.css in src directory`);
+      
+      // Add Tailwind import to index.js
+      const indexJsPath = path.join(projectPath, 'src', 'index.js');
+      if (fs.existsSync(indexJsPath)) {
+        let indexContent = fs.readFileSync(indexJsPath, 'utf8');
+        if (!indexContent.includes('./tailwind.css')) {
+          indexContent = indexContent.replace(
+            /import ['"]\.\/index\.css['"];/,
+            `import './index.css';\nimport './tailwind.css';`
+          );
+          fs.writeFileSync(indexJsPath, indexContent);
+          console.log(`✅ Added Tailwind CSS import to index.js`);
+        }
+      }
+      
+      // Update package.json to include Tailwind dependencies
+      const packageJsonPath = path.join(projectPath, 'package.json');
+      try {
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+        
+        // Add Tailwind dependencies
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        
+        packageJson.devDependencies['tailwindcss'] = '^3.3.3';
+        packageJson.devDependencies['autoprefixer'] = '^10.4.14';
+        packageJson.devDependencies['postcss'] = '^8.4.27';
+        
+        // Write updated package.json
+        fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+        console.log('✅ Updated package.json with Tailwind dependencies');
+      } catch (error) {
+        console.error(`⚠️ Error updating package.json with Tailwind dependencies: ${error.message}`);
+      }
+    }
+    
+    // Update package.json to include React Router
+    const packageJsonPath = path.join(projectPath, 'package.json');
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      
+      // Add React Router dependencies
+      packageJson.dependencies['react-router-dom'] = '^6.10.0';
+      
+      // Write updated package.json
+      fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+      console.log('✅ Updated package.json with React Router dependency');
+    } catch (error) {
+      console.error(`⚠️ Error updating package.json with React Router dependency: ${error.message}`);
+    }
+    
+    // Run npm install to ensure all dependencies are installed
+    console.log('\n⚙️ Running npm install to ensure all dependencies are installed...');
+    execSync('npm install', { 
+      stdio: 'inherit', 
+      cwd: projectPath 
+    });
+    console.log('✅ Dependencies installed');
+    
+    console.log(`\n🎉 Multi-component React project created successfully! Here's how to run it:\n`);
+    console.log(`cd ../${projectName}`);
+    console.log(`npm start\n`);
+    
+  } catch (error) {
+    console.error(`❌ Error creating React app: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Simple prompt function for user input
+ */
+function promptUser(question) {
+  const readline = require('readline').createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise(resolve => {
+    readline.question(question, answer => {
+      readline.close();
+      resolve(answer);
+    });
+  });
 }
 
 /**
@@ -227,443 +514,6 @@ function fixImagePaths(cssContent) {
       });
   
   return cssContent;
-}
-
-/**
- * Creates a complete React app with the extracted component
- */
-async function createReactProject(componentName, projectName, options = {}) {
-  const {
-    componentPath,
-    stylesDir,
-    styleImports,
-    includeComputedStyles = false,
-    setupTailwindCSS = false
-  } = options;
-  
-  const projectPath = path.join(process.cwd(), '..', projectName);
-  
-  console.log(`\n📦 Creating React app in ../${projectName}...`);
-  
-  try {
-    // Check if the project directory already exists
-    if (fs.existsSync(projectPath)) {
-      console.error(`\n⚠️ Directory ${projectPath} already exists.`);
-      const userAnswer = await promptUser(`Do you want to overwrite the existing project? (y/n): `);
-      
-      if (userAnswer.toLowerCase() !== 'y') {
-        console.log(`\n❌ React app creation aborted.`);
-        return;
-      }
-    }
-    
-    // Create React app
-    console.log(`\n⚙️ Running create-react-app...`);
-    execSync(`npx create-react-app ${projectName}`, { 
-      stdio: 'inherit', 
-      cwd: path.join(process.cwd(), '..') 
-    });
-    console.log('✅ React app created');
-    
-    // Create component and pages directories
-    fs.mkdirSync(path.join(projectPath, 'src', 'components'), { recursive: true });
-    fs.mkdirSync(path.join(projectPath, 'src', 'pages'), { recursive: true });
-    fs.mkdirSync(path.join(projectPath, 'src', 'styles'), { recursive: true });
-    
-    // Copy the component to pages directory
-    fs.copyFileSync(
-      componentPath,
-      path.join(projectPath, 'src', 'pages', `${componentName}.jsx`)
-    );
-    console.log(`✅ Component ${componentName}.jsx copied to project pages directory`);
-    
-    // Copy CSS files
-    const cssFiles = fs.readdirSync(stylesDir)
-      .filter(file => {
-        // Skip the computed.css file if includeComputedStyles is false
-        if (file === 'computed.css' && !includeComputedStyles) return false;
-        if (file === 'computed.css.unused') return false;
-        return file.endsWith('.css');
-      });
-      
-    cssFiles.forEach(file => {
-      const sourcePath = path.join(stylesDir, file);
-      const targetPath = path.join(projectPath, 'src', 'styles', file);
-      
-      // First copy the file
-      fs.copyFileSync(sourcePath, targetPath);
-      
-      // Then fix any paths in the CSS
-      let cssContent = fs.readFileSync(targetPath, 'utf8');
-      
-      // Fix image paths
-      cssContent = fixImagePaths(cssContent);
-      
-      // Fix font paths
-      cssContent = fixFontPaths(cssContent);
-      
-      // Write back the fixed CSS
-      fs.writeFileSync(targetPath, cssContent);
-      console.log(`✅ Copied and fixed paths in ${file}`);
-    });
-    
-    // Copy fonts and images directories if they exist
-    const fontsDir = path.join(__dirname, 'output', 'src/styles', 'fonts-flat');
-    const imagesDir = path.join(__dirname, 'output', 'src/styles', 'images-flat');
-    const targetFontsDir = path.join(projectPath, 'src', 'styles', 'fonts-flat');
-    const targetImagesDir = path.join(projectPath, 'src', 'styles', 'images-flat');
-    
-    if (fs.existsSync(fontsDir)) {
-      fs.mkdirSync(targetFontsDir, { recursive: true });
-      
-      fs.readdirSync(fontsDir).forEach(file => {
-        fs.copyFileSync(
-          path.join(fontsDir, file),
-          path.join(targetFontsDir, file)
-        );
-      });
-      
-      console.log(`✅ Copied fonts directory`);
-    }
-    
-    if (fs.existsSync(imagesDir)) {
-      fs.mkdirSync(targetImagesDir, { recursive: true });
-      
-      fs.readdirSync(imagesDir).forEach(file => {
-        fs.copyFileSync(
-          path.join(imagesDir, file),
-          path.join(targetImagesDir, file)
-        );
-      });
-      
-      console.log(`✅ Copied images directory`);
-    }
-    
-    // Update App.js to use the component from pages directory
-    const appJsPath = path.join(projectPath, 'src', 'App.js');
-    const appJsContent = `import React from 'react';
-import ${componentName} from './pages/${componentName}';
-
-function App() {
-  return (
-    <div className="App">
-      <${componentName} />
-    </div>
-  );
-}
-
-export default App;
-`;
-    
-    fs.writeFileSync(appJsPath, appJsContent);
-    console.log(`✅ Updated App.js to use the ${componentName} component`);
-    
-    // Configure Tailwind CSS if requested
-    if (setupTailwindCSS) {
-      console.log(`\n🌬️ Setting up Tailwind CSS in the React app...`);
-      
-      // Copy Tailwind config files from output directory
-      const tailwindConfigFiles = [
-        'tailwind.config.js',
-        'postcss.config.js',
-        'src/styles/tailwind.css',
-        'TAILWIND_SETUP.md'
-      ];
-      
-      tailwindConfigFiles.forEach(file => {
-        const sourcePath = path.join(__dirname, 'output', file);
-        const targetPath = path.join(projectPath, file.startsWith('styles/') ? 
-          path.join('src', file) : file);
-        
-        // Create directory if needed
-        const targetDir = path.dirname(targetPath);
-        if (!fs.existsSync(targetDir)) {
-          fs.mkdirSync(targetDir, { recursive: true });
-        }
-        
-        if (fs.existsSync(sourcePath)) {
-          fs.copyFileSync(sourcePath, targetPath);
-          console.log(`✅ Copied ${file} to React app`);
-        }
-      });
-      
-      // Copy DarkModeToggle component
-      const darkModeTogglePath = path.join(__dirname, 'output', 'src/components', 'DarkModeToggle.jsx');
-      if (fs.existsSync(darkModeTogglePath)) {
-        fs.copyFileSync(
-          darkModeTogglePath,
-          path.join(projectPath, 'src', 'components', 'DarkModeToggle.jsx')
-        );
-        console.log(`✅ Copied DarkModeToggle component to React app`);
-      }
-      
-      // Fix any CSS files that might use @layer directives
-      const reactStylesDir = path.join(projectPath, 'src', 'styles');
-      if (fs.existsSync(reactStylesDir)) {
-        console.log(`🔍 Checking CSS files for @layer directives...`);
-        fixCssLayerDirectives(reactStylesDir);
-      }
-      
-      // Update package.json to include Tailwind dependencies
-      const packageJsonPath = path.join(projectPath, 'package.json');
-      try {
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-        
-        // Add Tailwind dependencies
-        if (!packageJson.devDependencies) {
-          packageJson.devDependencies = {};
-        }
-        
-        packageJson.devDependencies['tailwindcss'] = '^3.3.3';
-        packageJson.devDependencies['autoprefixer'] = '^10.4.14';
-        packageJson.devDependencies['postcss'] = '^8.4.27';
-        
-        // Write updated package.json
-        fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
-        console.log('✅ Updated package.json with Tailwind dependencies');
-        
-        // Update App.js to include DarkModeToggle if it exists
-        if (fs.existsSync(path.join(projectPath, 'src', 'components', 'DarkModeToggle.jsx'))) {
-          const appJsContent = `import React from 'react';
-import ${componentName} from './pages/${componentName}';
-import DarkModeToggle from './components/DarkModeToggle';
-import './styles/tailwind.css';
-
-function App() {
-  return (
-    <div className="App">
-      <DarkModeToggle />
-      <${componentName} />
-    </div>
-  );
-}
-
-export default App;
-`;
-          fs.writeFileSync(appJsPath, appJsContent);
-          console.log(`✅ Updated App.js to include DarkModeToggle component`);
-        }
-      } catch (error) {
-        console.error(`⚠️ Error updating package.json with Tailwind dependencies: ${error.message}`);
-      }
-    }
-    
-    // Create webpack.config.js to handle font and image files correctly
-    const webpackConfigPath = path.join(projectPath, 'webpack.config.js');
-    const webpackContent = `
-module.exports = {
-  module: {
-    rules: [
-      {
-        test: /\\.(woff|woff2|eot|ttf|otf)$/i,
-        type: 'asset/resource',
-      },
-      {
-        test: /\\.(png|jpg|jpeg|gif|svg|webp)$/i,
-        type: 'asset/resource',
-      }
-    ],
-  },
-};
-`;
-    fs.writeFileSync(webpackConfigPath, webpackContent);
-    console.log(`✅ Created webpack.config.js with font and image handling rules`);
-      
-    // Create .env file to tell CRA to treat certain files as static assets
-    const envPath = path.join(projectPath, '.env');
-    const envContent = `
-# Tell Create React App to handle font files as static assets
-GENERATE_SOURCEMAP=false
-INLINE_RUNTIME_CHUNK=false
-# Allow importing from outside of src/
-EXTEND_ESLINT=true
-# Add public URL for production build
-PUBLIC_URL=.
-# Skip preflight check to avoid conflicts with custom webpack config
-SKIP_PREFLIGHT_CHECK=true
-# Ensure fonts are treated properly
-REACT_APP_FONTS_PATH=./fonts-flat
-# Ensure images are treated properly
-REACT_APP_IMAGES_PATH=./images-flat
-`;
-    fs.writeFileSync(envPath, envContent);
-    console.log(`✅ Created .env file for better font and image handling`);
-      
-    // Create a custom index.html with preloaded fonts
-    const indexHtmlPath = path.join(projectPath, 'public', 'index.html');
-    if (fs.existsSync(indexHtmlPath)) {
-      try {
-        let indexContent = fs.readFileSync(indexHtmlPath, 'utf8');
-        
-        // Add preload links for fonts
-        const flatFontsDir = path.join(stylesDir, 'fonts-flat');
-        const fontFiles = fs.existsSync(flatFontsDir) ? fs.readdirSync(flatFontsDir).filter(file => file.endsWith('.woff') || file.endsWith('.woff2')) : [];
-        const fontPreloads = fontFiles
-          .map(file => {
-            const type = file.endsWith('.woff') ? 'font/woff' : 'font/woff2';
-            return `    <link rel="preload" href="%PUBLIC_URL%/fonts-flat/${file}" as="font" type="${type}" crossorigin>`;
-          })
-          .join('\n');
-          
-        // Insert preload links before the closing head tag
-        indexContent = indexContent.replace('</head>', `\n${fontPreloads}\n  </head>`);
-        
-        fs.writeFileSync(indexHtmlPath, indexContent);
-        console.log(`✅ Updated index.html with font preload links`);
-      } catch (err) {
-        console.warn(`⚠️ Could not update index.html: ${err.message}`);
-      }
-    }
-    
-    try {
-      // Create a special font-loader.css file with multiple fallback methods
-      const fontLoaderCssPath = path.join(projectPath, 'src', 'styles', 'font-loader.css');
-      let fontLoaderContent = '/* Font loader with multiple fallback strategies */\n\n';
-      
-      const flatFontsDir = path.join(stylesDir, 'fonts-flat');
-      // Get all WOFF and WOFF2 files
-      const fontFiles = fs.existsSync(flatFontsDir) ? fs.readdirSync(flatFontsDir).filter(file => file.endsWith('.woff') || file.endsWith('.woff2')) : [];
-      
-      // Group by font name (without extension and hash)
-      const fontGroups = {};
-      fontFiles.forEach(file => {
-        // Try to extract font name by removing extension and hash
-        const baseName = file.split('.')[0].split('-')[0];
-        if (!fontGroups[baseName]) {
-          fontGroups[baseName] = [];
-        }
-        fontGroups[baseName].push(file);
-      });
-      
-      // Create font-face declarations for each font using multiple sources
-      Object.keys(fontGroups).forEach(fontName => {
-        const fontFiles = fontGroups[fontName];
-        
-        fontLoaderContent += `@font-face {\n`;
-        fontLoaderContent += `  font-family: '${fontName}';\n`;
-        fontLoaderContent += `  src: \n`;
-        
-        // Add all variants of the font
-        const srcs = fontFiles.map(file => {
-          const format = file.endsWith('.woff') ? 'woff' : 'woff2';
-          return `    url('./fonts-flat/${file}') format('${format}')`; 
-        });
-        
-        fontLoaderContent += srcs.join(',\n') + ';\n';
-        fontLoaderContent += `  font-weight: normal;\n`;
-        fontLoaderContent += `  font-style: normal;\n`;
-        fontLoaderContent += `  font-display: swap;\n`;
-        fontLoaderContent += `}\n\n`;
-      });
-      
-      fs.writeFileSync(fontLoaderCssPath, fontLoaderContent);
-      console.log(`✅ Created font-loader.css with ${Object.keys(fontGroups).length} font families`);
-      
-      // Add an import for font-loader.css to the main component
-      const componentPath = path.join(projectPath, 'src', 'pages', `${componentName}.jsx`);
-      if (fs.existsSync(componentPath)) {
-        let componentContent = fs.readFileSync(componentPath, 'utf8');
-        
-        // Add font-loader import if not already there
-        if (!componentContent.includes('font-loader.css')) {
-          componentContent = componentContent.replace(
-            /import React from ['"]react['"];/,
-            `import React from 'react';\nimport '../styles/font-loader.css';`
-          );
-          fs.writeFileSync(componentPath, componentContent);
-          console.log(`✅ Added font-loader.css import to ${componentName}.jsx`);
-        }
-      }
-    } catch (err) {
-      console.warn(`⚠️ Could not create font-loader.css: ${err.message}`);
-    }
-    
-    // Verify all necessary files exist for the React app to run
-    const requiredFiles = [
-      path.join(projectPath, 'src', 'App.js'),
-      path.join(projectPath, 'src', 'index.js'),
-      path.join(projectPath, 'public', 'index.html'),
-      path.join(projectPath, 'package.json')
-    ];
-    
-    const missingFiles = requiredFiles.filter(file => !fs.existsSync(file));
-    
-    if (missingFiles.length > 0) {
-      console.error('⚠️ Some required files are missing:');
-      missingFiles.forEach(file => console.error(`  - ${file}`));
-      
-      // Create index.js if it's missing
-      if (missingFiles.includes(path.join(projectPath, 'src', 'index.js'))) {
-        const indexJsContent = `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import App from './App';
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-`;
-        fs.writeFileSync(path.join(projectPath, 'src', 'index.js'), indexJsContent);
-        console.log('✅ Created missing src/index.js file');
-      }
-      
-      // Create index.css if it's missing
-      if (!fs.existsSync(path.join(projectPath, 'src', 'index.css'))) {
-        const indexCssContent = `body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}
-`;
-        fs.writeFileSync(path.join(projectPath, 'src', 'index.css'), indexCssContent);
-        console.log('✅ Created missing src/index.css file');
-      }
-    }
-    
-    // Run npm install to ensure all dependencies are installed
-    console.log('\n⚙️ Running npm install to ensure all dependencies are installed...');
-    execSync('npm install', { 
-      stdio: 'inherit', 
-      cwd: projectPath 
-    });
-    console.log('✅ Dependencies installed');
-    
-    console.log(`\n🎉 React project created successfully! Here's how to run it:\n`);
-    console.log(`cd ../${projectName}`);
-    console.log(`npm start\n`);
-    
-  } catch (error) {
-    console.error(`❌ Error creating React app: ${error.message}`);
-    throw error;
-  }
-}
-
-/**
- * Simple prompt function for user input
- */
-function promptUser(question) {
-  const readline = require('readline').createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  return new Promise(resolve => {
-    readline.question(question, answer => {
-      readline.close();
-      resolve(answer);
-    });
-  });
 }
 
 /**
@@ -740,19 +590,49 @@ if (require.main === module) {
   const reactAppName = args.find((arg, i) => 
     (arg === '--app-name' || arg === '-a') && i + 1 < args.length
   ) ? args[args.findIndex(arg => arg === '--app-name' || arg === '-a') + 1] : componentName.toLowerCase() + '-app';
+  const outputDir = path.resolve(__dirname, 'output');
   
-  if (!url) {
-    console.error('❌ Usage: node html-to-react.js <url> [component-name] [--create-app/-c] [--app-name/-a app-name] [--include-computed/-i] [--tailwind/-t]');
+  // Check if routes.json exists
+  const routesFilePath = path.join(outputDir, 'routes.json');
+  const hasRoutesFile = fs.existsSync(routesFilePath);
+  
+  // Options to pass to the conversion functions
+  const options = { 
+    componentName, 
+    createReactApp, 
+    reactAppName, 
+    includeComputedStyles, 
+    setupTailwindCSS,
+    outputDir
+  };
+
+  // If routes.json exists, process routes from it, otherwise process the single URL
+  if (hasRoutesFile) {
+    console.log('🔄 Processing routes from routes.json');
+    processRoutesFromJson(outputDir, options)
+      .then(() => console.log('✨ All routes processed successfully!'))
+      .catch(err => {
+        console.error('❌ Error:', err);
+        process.exit(1);
+      });
+  } else if (url) {
+    // Process a single route from the command line arguments
+    convertToReactComponent(url, options)
+      .then(() => console.log('✨ Done!'))
+      .catch(err => {
+        console.error('❌ Error:', err);
+        process.exit(1);
+      });
+  } else {
+    console.error('❌ Error: No URL provided and no routes.json found in output directory');
+    console.error('Usage: node html-to-react.js <url> [component-name] [--create-app/-c] [--app-name/-a app-name] [--include-computed/-i] [--tailwind/-t]');
+    console.error('   OR: node html-to-react.js (with routes.json in output directory)');
     console.error('Example: node html-to-react.js https://example.com MyComponent --create-app --app-name my-react-app --tailwind');
     process.exit(1);
   }
-
-  convertToReactComponent(url, { componentName, createReactApp, reactAppName, includeComputedStyles, setupTailwindCSS })
-    .then(() => console.log('✨ Done!'))
-    .catch(err => {
-      console.error('❌ Error:', err);
-      process.exit(1);
-    });
 }
 
-module.exports = convertToReactComponent; 
+module.exports = {
+  convertToReactComponent,
+  processRoutesFromJson
+}; 

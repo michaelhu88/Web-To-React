@@ -121,6 +121,8 @@ function isBooleanValue(value) {
 let imageImportsMap = new Map();
 // Store mapping from original URLs to sanitized filenames from extractImages.js
 let sanitizedFilenameMap = {};
+// Track SVG imports separately
+let svgImportsMap = new Map();
 
 /**
  * Convert absolute paths to import variables for HTML image sources
@@ -143,17 +145,16 @@ function fixHtmlImagePath(src) {
     // Get sanitized filename (try with and without leading slash)
     const sanitizedFilename = sanitizedFilenameMap[src] || sanitizedFilenameMap[src.substring(1)];
     
-    // Create an import variable name from the sanitized filename
-    let importName = sanitizedFilename
-      .replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '')  // Remove extension
-      .replace(/[^a-zA-Z0-9]/g, '_')                       // Replace non-alphanumeric with underscore
-      .replace(/^[0-9]/, 'img_$&');                        // Ensure it doesn't start with a number
+    // Check if it's an SVG file
+    if (sanitizedFilename.toLowerCase().endsWith('.svg')) {
+      // Create import variable for SVG
+      const importName = generateSvgImportName(sanitizedFilename);
+      svgImportsMap.set(sanitizedFilename, importName);
+      return `{${importName}}`;
+    }
     
-    // Add to the map of images to import
-    imageImportsMap.set(sanitizedFilename, importName);
-    
-    // Return the import variable reference
-    return `{${importName}}`;
+    // Use static asset references for other images
+    return `"./images-flat/${sanitizedFilename}"`;
   }
   
   // Fall back to the old logic if we don't have a mapping for this image
@@ -174,27 +175,39 @@ function fixHtmlImagePath(src) {
   
   // Check if it's an image file by extension
   if (filename && /\.(svg|png|jpg|jpeg|gif|webp|avif)$/i.test(filename)) {
-    let importName;
     
-    // Check if we've already created an import for this filename
-    if (imageImportsMap.has(filename)) {
-      importName = imageImportsMap.get(filename);
-    } else {
-      // Create an import variable name from the filename
-      importName = filename
-        .replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '')  // Remove extension
-        .replace(/[^a-zA-Z0-9]/g, '_')                       // Replace non-alphanumeric with underscore
-        .replace(/^[0-9]/, 'img_$&');                        // Ensure it doesn't start with a number
-      
-      // Add to the map of images to import
-      imageImportsMap.set(filename, importName);
+    // Check if it's an SVG file
+    if (filename.toLowerCase().endsWith('.svg')) {
+      // Create import variable for SVG
+      const importName = generateSvgImportName(filename);
+      svgImportsMap.set(filename, importName);
+      return `{${importName}}`;
     }
     
-    // Return the import variable reference
-    return `{${importName}}`;
+    // Use static asset references for other images
+    return `"./images-flat/${filename}"`;
   }
   
   return src;
+}
+
+/**
+ * Generate a React component import name for an SVG file
+ * @param {string} filename - The SVG filename
+ * @returns {string} - A valid React component import name
+ */
+function generateSvgImportName(filename) {
+  // Remove extension and sanitize for React component name
+  const baseName = filename.replace(/\.svg$/i, '');
+  // Convert to PascalCase and remove non-alphanumeric characters
+  const componentName = baseName
+    .replace(/[^a-zA-Z0-9]/g, '_')
+    .split('_')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join('');
+  
+  // Ensure it starts with a capital letter
+  return componentName.charAt(0).toUpperCase() + componentName.slice(1) + 'Svg';
 }
 
 /**
@@ -202,6 +215,7 @@ function fixHtmlImagePath(src) {
  */
 function resetImageImports() {
   imageImportsMap = new Map();
+  svgImportsMap = new Map();
 }
 
 /**
@@ -213,17 +227,39 @@ function setSanitizedFilenameMap(mapping) {
 }
 
 /**
+ * Escapes special characters in text for JSX output
+ * @param {string} text - The text to escape
+ * @returns {string} - Escaped text safe for JSX
+ */
+function escapeJSXText(text) {
+  return text
+    .replace(/&/g, '&amp;') // must come first
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
  * Get the unique list of image imports as import statements
  * @returns {string} - Import statements for all images
  */
 function getImageImports() {
-  if (imageImportsMap.size === 0) return '';
+  const imports = [];
   
-  return Array.from(imageImportsMap.entries())
-    .map(([filename, importName]) => 
-      `import ${importName} from '../styles/images-flat/${filename}';`
-    )
-    .join('\n');
+  // Add regular image imports (if any)
+  if (imageImportsMap.size > 0) {
+    Array.from(imageImportsMap.entries()).forEach(([filename, importName]) => {
+      imports.push(`import ${importName} from './images-flat/${filename}';`);
+    });
+  }
+  
+  // Add SVG imports as React components
+  if (svgImportsMap.size > 0) {
+    Array.from(svgImportsMap.entries()).forEach(([filename, importName]) => {
+      imports.push(`import { ReactComponent as ${importName} } from './images-flat/${filename}';`);
+    });
+  }
+  
+  return imports.join('\n');
 }
 
 /**
@@ -469,7 +505,22 @@ function convertHTMLtoJSX(html) {
         
         // Handle image tags specifically to prepare for imports
         if (tagName === 'img' && attributes.src) {
-          attributes.src = fixHtmlImagePath(attributes.src);
+          const fixedSrc = fixHtmlImagePath(attributes.src);
+          
+          // Check if this is an SVG that should be converted to a component
+          if (fixedSrc.startsWith('{') && fixedSrc.endsWith('}')) {
+            // This is an SVG component reference
+            const componentName = fixedSrc.slice(1, -1); // Remove curly braces
+            
+            // Convert img tag to SVG component
+            // Store the component info to render as a self-closing component
+            attributes._svgComponent = componentName;
+            attributes._originalTag = 'img';
+            // Remove src since we'll use the component instead
+            delete attributes.src;
+          } else {
+            attributes.src = fixedSrc;
+          }
         }
         
         // Skip problematic tags for React
@@ -507,27 +558,54 @@ function convertHTMLtoJSX(html) {
         
         // If not in body tag, store content in case no body tag is found
         if (!inBodyTag) {
-          const isSelfClosing = selfClosingTags.has(tagName);
-          const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
-          outputBeforeBodyTag += tag;
+          // Check if this should be converted to an SVG component
+          if (attributes._svgComponent) {
+            // Render as SVG component instead of img tag
+            const componentName = attributes._svgComponent;
+            // Extract other attributes (excluding our internal ones)
+            const otherAttrs = {...attributes};
+            delete otherAttrs._svgComponent;
+            delete otherAttrs._originalTag;
+            
+            const tag = `<${componentName}${convertAttributes(otherAttrs)} />`;
+            outputBeforeBodyTag += tag;
+          } else {
+            const isSelfClosing = selfClosingTags.has(tagName);
+            const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
+            outputBeforeBodyTag += tag;
+          }
           return;
         }
         
         // Output tags if we're inside the body
-        const isSelfClosing = selfClosingTags.has(tagName);
-        const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
-        output += tag;
-        if (!isSelfClosing) stack.push({ tag: tagName, selfClosing: false });
-        else stack.push({ tag: tagName, selfClosing: true });
+        // Check if this should be converted to an SVG component
+        if (attributes._svgComponent) {
+          // Render as SVG component instead of img tag
+          const componentName = attributes._svgComponent;
+          // Extract other attributes (excluding our internal ones)
+          const otherAttrs = {...attributes};
+          delete otherAttrs._svgComponent;
+          delete otherAttrs._originalTag;
+          
+          const tag = `<${componentName}${convertAttributes(otherAttrs)} />`;
+          output += tag;
+          stack.push({ tag: componentName, selfClosing: true });
+        } else {
+          const isSelfClosing = selfClosingTags.has(tagName);
+          const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
+          output += tag;
+          if (!isSelfClosing) stack.push({ tag: tagName, selfClosing: false });
+          else stack.push({ tag: tagName, selfClosing: true });
+        }
       },
 
       ontext(text) {
         // Only output text if we're inside the body and not in a skipped tag
         if (inBodyTag && !skipTag && text.trim()) {
-          output += text;
+          output += escapeJSXText(text);
         } else if (!inBodyTag && !skipTag && text.trim()) {
           // If not in body tag, store text in case no body tag is found
-          outputBeforeBodyTag += text;
+          outputBeforeBodyTag += escapeJSXText(text);
         }
       },
 
@@ -572,7 +650,7 @@ function convertHTMLtoJSX(html) {
         output += `</${tag}>`;
       },
 
-      oncomment(data) {
+      oncomment() {
         // Ignore comments
       }
     },
@@ -609,12 +687,12 @@ function convertHTMLtoJSX(html) {
   // Clean up any React-incompatible attributes that might have been missed
   output = output
     // Convert inline event handlers
-    .replace(/on([a-z]+)="([^"]*)"/gi, (match, event, handler) => {
+    .replace(/on([a-z]+)="([^"]*)"/gi, (_, event, handler) => {
       const jsxEvent = `on${event.charAt(0).toUpperCase()}${event.slice(1)}`;
       return `${jsxEvent}={() => { ${handler} }}`;
     })
     // Convert any remaining hyphenated attributes to camelCase (especially for SVG)
-    .replace(/\s([a-z-]+)-([a-z-]+)="([^"]*)"/gi, (match, prefix, suffix, value) => {
+    .replace(/\s([a-z-]+)-([a-z-]+)="([^"]*)"/gi, (_, prefix, suffix, value) => {
       // Skip data- attributes
       if (prefix === 'data') return match;
       
@@ -624,7 +702,7 @@ function convertHTMLtoJSX(html) {
     // Convert class attributes that might have been missed
     .replace(/\sclass="/g, ' className="')
     // Fix boolean attributes with quoted true/false values to use JSX syntax
-    .replace(booleanAttrsRegex, (match, attr, value) => {
+    .replace(booleanAttrsRegex, (_, attr, value) => {
       // Get the correct JSX attribute name
       let jsxAttr = attr;
       if (attributeRenameMap[attr.toLowerCase()]) {

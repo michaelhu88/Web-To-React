@@ -7,39 +7,69 @@ const { extractFonts } = require("./extractFonts");
 const { extractImages } = require("./extractImages");
 
 /**
- * Fix all font paths in CSS content to use the flat fonts directory
- * This handles all possible path patterns to ensure fonts are found
+ * Fix all asset paths in CSS content to use the correct flat directories
+ * This handles both font and image paths to ensure assets are found
  * @param {string} cssContent - The CSS content to fix
  * @param {string} flatFontsDirName - Name of the flat fonts directory
+ * @param {string} flatImagesDirName - Name of the flat images directory
  * @returns {string} - The fixed CSS content
  */
-function fixFontPaths(cssContent, flatFontsDirName) {
+function fixAssetPaths(cssContent, flatFontsDirName = 'fonts-flat', flatImagesDirName = 'images-flat') {
+  // Fix font paths
+  
   // Handle front/assets/fonts paths
   cssContent = cssContent.replace(/url\(['"]?(\/front\/assets\/fonts\/[^'")\s]+)['"]?\)/gi, 
     (match, fontPath) => {
       const fontFile = path.basename(fontPath);
-      return `url('../${flatFontsDirName}/${fontFile}')`;
+      return `url('./${flatFontsDirName}/${fontFile}')`;
     });
   
   // Handle /s/ paths (Google Fonts)
   cssContent = cssContent.replace(/url\(['"]?(\/s\/[^\/]+\/[^'")\s]+)['"]?\)/gi, 
     (match, fontPath) => {
       const fontFile = path.basename(fontPath);
-      return `url('../${flatFontsDirName}/${fontFile}')`;
+      return `url('./${flatFontsDirName}/${fontFile}')`;
     });
   
   // Handle ajax/libs paths (KaTeX)
   cssContent = cssContent.replace(/url\(['"]?(\/ajax\/libs\/[^'")\s]+)['"]?\)/gi, 
     (match, fontPath) => {
       const fontFile = path.basename(fontPath);
-      return `url('../${flatFontsDirName}/${fontFile}')`;
+      return `url('./${flatFontsDirName}/${fontFile}')`;
     });
   
   // Generic catch-all for any absolute paths to font files
   cssContent = cssContent.replace(/url\(['"]?(\/[^'")\s]+\.(woff2?|ttf|eot|otf|svg))['"]?\)/gi, 
     (match, fontPath) => {
       const fontFile = path.basename(fontPath);
-      return `url('../${flatFontsDirName}/${fontFile}')`;
+      return `url('./${flatFontsDirName}/${fontFile}')`;
+    });
+  
+  // Fix image paths
+  
+  // Fix any ../images-flat/ paths to ./images-flat/
+  cssContent = cssContent.replace(/url\(['"]?\.\.\/images-flat\/([^'")\s]+)['"]?\)/gi, 
+    (match, imagePath) => {
+      return `url('./${flatImagesDirName}/${imagePath}')`;
+    });
+  
+  // Fix any absolute image paths to use images-flat
+  cssContent = cssContent.replace(/url\(['"]?(\/[^'")\s]+\.(png|jpg|jpeg|gif|webp|svg))['"]?\)/gi, 
+    (match, imagePath) => {
+      const imageFile = path.basename(imagePath);
+      return `url('./${flatImagesDirName}/${imageFile}')`;
+    });
+  
+  // Fix any relative image paths that might be wrong
+  cssContent = cssContent.replace(/url\(['"]?(?:\.\.\/)*images\/([^'")\s]+)['"]?\)/gi, 
+    (match, imagePath) => {
+      return `url('./${flatImagesDirName}/${imagePath}')`;
+    });
+  
+  // Fix any direct image references without directory (might be in wrong location)
+  cssContent = cssContent.replace(/url\(['"]?([^'")\s\/]+\.(png|jpg|jpeg|gif|webp))['"]?\)/gi, 
+    (match, imageFile) => {
+      return `url('./${flatImagesDirName}/${imageFile}')`;
     });
   
   return cssContent;
@@ -248,8 +278,8 @@ async function extractStylesWithPuppeteer(url, outputDir = path.resolve(__dirnam
     console.log(`\n🖼️ Extracting images from HTML and CSS...`);
     const { processedImages, updatedHtml } = await extractImages(renderedHTML, cssFiles, url, outputDir);
     
-    // After everything else is done, process all CSS files to fix any remaining font path issues
-    console.log(`\n🔧 Post-processing CSS files to fix font paths...`);
+    // After everything else is done, process all CSS files to fix any remaining asset path issues
+    console.log(`\n🔧 Post-processing CSS files to fix asset paths...`);
     try {
       const allCssFiles = fs.readdirSync(outputDir)
         .filter(file => file.endsWith('.css'));
@@ -258,11 +288,11 @@ async function extractStylesWithPuppeteer(url, outputDir = path.resolve(__dirnam
         const cssPath = path.join(outputDir, cssFile);
         try {
           let cssContent = fs.readFileSync(cssPath, 'utf8');
-          const updatedCss = fixFontPaths(cssContent, 'fonts-flat'); // Always use fonts-flat for consistency
+          const updatedCss = fixAssetPaths(cssContent, 'fonts-flat', 'images-flat');
           fs.writeFileSync(cssPath, updatedCss);
-          console.log(`✅ Fixed font paths in ${cssFile}`);
+          console.log(`✅ Fixed asset paths in ${cssFile}`);
         } catch (err) {
-          console.warn(`⚠️ Could not fix font paths in ${cssFile}: ${err.message}`);
+          console.warn(`⚠️ Could not fix asset paths in ${cssFile}: ${err.message}`);
         }
       }
     } catch (err) {

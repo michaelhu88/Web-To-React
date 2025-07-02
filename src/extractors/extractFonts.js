@@ -3,37 +3,6 @@ const path = require('path');
 const axios = require('axios');
 
 /**
- * Check if a font URL is from Google Fonts
- * @param {string} url - The font URL to check
- * @returns {boolean} - True if the font is from Google Fonts
- */
-function isGoogleFont(url) {
-  // Check for common patterns in Google Font URLs
-  if (url.includes('fonts.googleapis.com') || url.includes('fonts.gstatic.com')) {
-    return true;
-  }
-  
-  // Check for common Google Fonts patterns (like /s/sourcesanspro/)
-  if (url.includes('/s/sourcesanspro/') || 
-      url.includes('/s/ibmplexmono/') || 
-      url.match(/\/v\d+\//)) {
-    return true;
-  }
-  
-  // Check for uuid-style font filenames which are often Google Fonts or static fonts
-  if (url.match(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(woff2?|ttf)/i)) {
-    return true;
-  }
-  
-  // Additionally include front/assets/fonts pattern which appears to contain static fonts
-  if (url.includes('/front/assets/fonts/')) {
-    return true;
-  }
-  
-  return false;
-}
-
-/**
  * Extracts font files from CSS content and downloads them
  * @param {string} cssContent - The CSS content to analyze
  * @param {string} baseUrl - Base URL of the website
@@ -160,7 +129,7 @@ function rewriteCSSFontPaths(cssContent, fontPaths) {
     // Escape special regex characters
     const escapedUrl = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(`url\\(['"]?${escapedUrl}['"]?\\)`, 'g');
-    updatedCSS = updatedCSS.replace(regex, `url('../fonts-flat/${path.basename(localPath)}')`);
+    updatedCSS = updatedCSS.replace(regex, `url('./fonts-flat/${path.basename(localPath)}')`);
   });
   
   // Handle TTF references by replacing them with WOFF2/WOFF if available
@@ -189,7 +158,7 @@ function rewriteCSSFontPaths(cssContent, fontPaths) {
         // Replace the TTF reference with the best available format
         const escapedTtfPath = ttfPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const ttfReplaceRegex = new RegExp(`url\\(['"]?${escapedTtfPath}['"]?\\)`, 'gi');
-        updatedCSS = updatedCSS.replace(ttfReplaceRegex, `url('../fonts-flat/${fontFileName}')`);
+        updatedCSS = updatedCSS.replace(ttfReplaceRegex, `url('./fonts-flat/${fontFileName}')`);
         console.log(`✅ Replaced TTF reference for ${ttfBaseName} with ${fontFileName}`);
       }
     }
@@ -197,40 +166,40 @@ function rewriteCSSFontPaths(cssContent, fontPaths) {
   
   // Fix common problematic paths - all point to fonts-flat
   
-  // Replace references to /front/assets/fonts/ with ../fonts-flat/
+  // Replace references to /front/assets/fonts/ with ./fonts-flat/
   updatedCSS = updatedCSS.replace(/url\(['"]?(\/front\/assets\/fonts\/([^'"\)]+))['"]?\)/g, 
-      (match, fullPath, fontFile) => `url('../fonts-flat/${fontFile}')`);
+      (match, fullPath, fontFile) => `url('./fonts-flat/${fontFile}')`);
       
   // Replace references to Google font paths
   updatedCSS = updatedCSS.replace(/url\(['"]?(\/s\/[^\/]+\/([^'"\)]+))['"]?\)/g, 
-      (match, fullPath, fontFile) => `url('../fonts-flat/${fontFile}')`);
+      (match, fullPath, fontFile) => `url('./fonts-flat/${fontFile}')`);
       
   // Replace KaTeX paths
   updatedCSS = updatedCSS.replace(/url\(['"]?(\/ajax\/libs\/KaTeX\/[^\/]+\/fonts\/([^'"\)]+))['"]?\)/g,
-      (match, fullPath, fontFile) => `url('../fonts-flat/${fontFile}')`);
+      (match, fullPath, fontFile) => `url('./fonts-flat/${fontFile}')`);
   
   // Replace any absolute URL paths with font extensions
   updatedCSS = updatedCSS.replace(/url\(['"]?(\/[^'")\s]+\.(woff2?|ttf|eot|otf|svg))['"]?\)/gi, 
     (match, fontPath) => {
       const fontFile = path.basename(fontPath);
-      return `url('../fonts-flat/${fontFile}')`;
+      return `url('./fonts-flat/${fontFile}')`;
     });
   
   // Clean up any paths that have duplicate 'fonts/' segments
-  updatedCSS = updatedCSS.replace(/url\(['"]?\.\.\/fonts-flat\/fonts\/([^'"\)]+)['"]?\)/g, 
-      `url('../fonts-flat/$1')`);
+  updatedCSS = updatedCSS.replace(/url\(['"]?\.\/fonts-flat\/fonts\/([^'"\)]+)['"]?\)/g, 
+      `url('./fonts-flat/$1')`);
   
   // Replace any remaining relative font paths to use fonts-flat
   updatedCSS = updatedCSS.replace(/url\(['"]?(?:\.\.\/)*fonts\/([^'"\)]+)['"]?\)/g, 
-      `url('../fonts-flat/$1')`);
+      `url('./fonts-flat/$1')`);
   
   // Replace any direct references to font files without a directory
   updatedCSS = updatedCSS.replace(/url\(['"]?([^'"\)\/]+\.(woff2?|ttf|eot|otf|svg))['"]?\)/gi, 
-      `url('../fonts-flat/$1')`);
+      `url('./fonts-flat/$1')`);
   
   // Add multiple fallback paths for compatibility
-  updatedCSS = updatedCSS.replace(/url\(['"]?\.\.\/fonts-flat\/([^'"\)]+)['"]?\)/g, 
-      (match, fontFile) => `url('../fonts-flat/${fontFile}'), url('./fonts-flat/${fontFile}'), url('/fonts-flat/${fontFile}'), url('/fonts/${fontFile}')`);
+  updatedCSS = updatedCSS.replace(/url\(['"]?\.\/fonts-flat\/([^'"\)]+)['"]?\)/g, 
+      (match, fontFile) => `url('./fonts-flat/${fontFile}'), url('/fonts-flat/${fontFile}'), url('/fonts/${fontFile}')`);
   
   return updatedCSS;
 }
@@ -286,7 +255,7 @@ function filterFontFaces(fontFaceBlocks, fontPaths) {
         // Replace the URL with our flat directory path
         const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`url\\(['"]?${escapedUrl}['"]?\\)`, 'g');
-        updatedBlock = updatedBlock.replace(regex, `url('../fonts-flat/${fontFilename}')`);
+        updatedBlock = updatedBlock.replace(regex, `url('./fonts-flat/${fontFilename}')`);
       } 
       // If it's a TTF that we don't have but we have WOFF/WOFF2 version
       else if (url.endsWith('.ttf') && fontFormatMap.has(fontBaseName)) {
@@ -305,7 +274,7 @@ function filterFontFaces(fontFaceBlocks, fontPaths) {
           // Replace the TTF reference with the best available format
           const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const regex = new RegExp(`url\\(['"]?${escapedUrl}['"]?\\)`, 'g');
-          updatedBlock = updatedBlock.replace(regex, `url('../fonts-flat/${fontFileName}')`);
+          updatedBlock = updatedBlock.replace(regex, `url('./fonts-flat/${fontFileName}')`);
           console.log(`✅ In @font-face: Replaced TTF reference for ${fontBaseName} with ${fontFileName}`);
         }
       }
@@ -314,26 +283,26 @@ function filterFontFaces(fontFaceBlocks, fontPaths) {
     // Apply additional replacements for common patterns
     // Replace references to /front/assets/fonts/
     updatedBlock = updatedBlock.replace(/url\(['"]?(\/front\/assets\/fonts\/([^'"\)]+))['"]?\)/g, 
-        (match, fullPath, fontFile) => `url('../fonts-flat/${fontFile}')`);
+        (match, fullPath, fontFile) => `url('./fonts-flat/${fontFile}')`);
         
     // Replace references to Google font paths
     updatedBlock = updatedBlock.replace(/url\(['"]?(\/s\/[^\/]+\/([^'"\)]+))['"]?\)/g, 
-        (match, fullPath, fontFile) => `url('../fonts-flat/${fontFile}')`);
+        (match, fullPath, fontFile) => `url('./fonts-flat/${fontFile}')`);
         
     // Replace KaTeX paths
     updatedBlock = updatedBlock.replace(/url\(['"]?(\/ajax\/libs\/KaTeX\/[^\/]+\/fonts\/([^'"\)]+))['"]?\)/g,
-        (match, fullPath, fontFile) => `url('../fonts-flat/${fontFile}')`);
+        (match, fullPath, fontFile) => `url('./fonts-flat/${fontFile}')`);
     
     // Replace any absolute URL paths with font extensions
     updatedBlock = updatedBlock.replace(/url\(['"]?(\/[^'")\s]+\.(woff2?|ttf|eot|otf|svg))['"]?\)/gi, 
       (match, fontPath) => {
         const fontFile = path.basename(fontPath);
-        return `url('../fonts-flat/${fontFile}')`;
+        return `url('./fonts-flat/${fontFile}')`;
       });
 
     // Add multiple fallback paths for compatibility
-    updatedBlock = updatedBlock.replace(/url\(['"]?\.\.\/fonts-flat\/([^'"\)]+)['"]?\)/g, 
-        (match, fontFile) => `url('../fonts-flat/${fontFile}'), url('./fonts-flat/${fontFile}'), url('/fonts-flat/${fontFile}'), url('/fonts/${fontFile}')`);
+    updatedBlock = updatedBlock.replace(/url\(['"]?\.\/fonts-flat\/([^'"\)]+)['"]?\)/g, 
+        (match, fontFile) => `url('./fonts-flat/${fontFile}'), url('/fonts-flat/${fontFile}'), url('/fonts/${fontFile}')`);
     
     return updatedBlock;
   });
@@ -341,7 +310,7 @@ function filterFontFaces(fontFaceBlocks, fontPaths) {
   // Filter out any blocks that don't have any of our downloaded fonts
   // This is important to avoid CSS referencing fonts we don't have
   return updatedFontFaces.filter(block => {
-    const fontUrlRegex = /url\(['"]?\.\.\/fonts-flat\/([^'"\)]+)['"]?\)/gi;
+    const fontUrlRegex = /url\(['"]?\.\/fonts-flat\/([^'"\)]+)['"]?\)/gi;
     return fontUrlRegex.test(block);
   });
 }
