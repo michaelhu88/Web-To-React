@@ -121,8 +121,6 @@ function isBooleanValue(value) {
 let imageImportsMap = new Map();
 // Store mapping from original URLs to sanitized filenames from extractImages.js
 let sanitizedFilenameMap = {};
-// Track SVG imports separately
-let svgImportsMap = new Map();
 
 /**
  * Convert absolute paths to import variables for HTML image sources
@@ -145,15 +143,14 @@ function fixHtmlImagePath(src) {
     // Get sanitized filename (try with and without leading slash)
     const sanitizedFilename = sanitizedFilenameMap[src] || sanitizedFilenameMap[src.substring(1)];
     
-    // Check if it's an SVG file
-    if (sanitizedFilename.toLowerCase().endsWith('.svg')) {
-      // Create import variable for SVG
-      const importName = generateSvgImportName(sanitizedFilename);
-      svgImportsMap.set(sanitizedFilename, importName);
+    // Create import variable for ALL images (SVGs and PNGs)
+    if (/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i.test(sanitizedFilename)) {
+      const importName = generateImageImportName(sanitizedFilename);
+      imageImportsMap.set(sanitizedFilename, importName);
       return `{${importName}}`;
     }
     
-    // Use static asset references for other images
+    // Fallback for non-image files
     return `"./images-flat/${sanitizedFilename}"`;
   }
   
@@ -175,39 +172,40 @@ function fixHtmlImagePath(src) {
   
   // Check if it's an image file by extension
   if (filename && /\.(svg|png|jpg|jpeg|gif|webp|avif)$/i.test(filename)) {
-    
-    // Check if it's an SVG file
-    if (filename.toLowerCase().endsWith('.svg')) {
-      // Create import variable for SVG
-      const importName = generateSvgImportName(filename);
-      svgImportsMap.set(filename, importName);
-      return `{${importName}}`;
-    }
-    
-    // Use static asset references for other images
-    return `"./images-flat/${filename}"`;
+    // Create import variable for ALL images (SVGs and PNGs)
+    const importName = generateImageImportName(filename);
+    imageImportsMap.set(filename, importName);
+    return `{${importName}}`;
   }
   
   return src;
 }
 
 /**
- * Generate a React component import name for an SVG file
- * @param {string} filename - The SVG filename
- * @returns {string} - A valid React component import name
+ * Generate an import variable name for any image file
+ * @param {string} filename - The image filename
+ * @returns {string} - A valid JavaScript variable name
  */
-function generateSvgImportName(filename) {
-  // Remove extension and sanitize for React component name
-  const baseName = filename.replace(/\.svg$/i, '');
-  // Convert to PascalCase and remove non-alphanumeric characters
-  const componentName = baseName
+function generateImageImportName(filename) {
+  // Remove extension and sanitize for variable name
+  const baseName = filename.replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '');
+  // Convert to camelCase and remove non-alphanumeric characters
+  const variableName = baseName
     .replace(/[^a-zA-Z0-9]/g, '_')
     .split('_')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .map((part, index) => {
+      if (index === 0) {
+        return part.toLowerCase();
+      }
+      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    })
     .join('');
   
-  // Ensure it starts with a capital letter
-  return componentName.charAt(0).toUpperCase() + componentName.slice(1) + 'Svg';
+  // Ensure it starts with a letter and add suffix based on file type
+  const cleanName = variableName.charAt(0).toLowerCase() + variableName.slice(1);
+  const extension = filename.split('.').pop().toLowerCase();
+  
+  return cleanName + extension.charAt(0).toUpperCase() + extension.slice(1);
 }
 
 /**
@@ -215,7 +213,6 @@ function generateSvgImportName(filename) {
  */
 function resetImageImports() {
   imageImportsMap = new Map();
-  svgImportsMap = new Map();
 }
 
 /**
@@ -243,23 +240,13 @@ function escapeJSXText(text) {
  * @returns {string} - Import statements for all images
  */
 function getImageImports() {
-  const imports = [];
+  if (imageImportsMap.size === 0) return '';
   
-  // Add regular image imports (if any)
-  if (imageImportsMap.size > 0) {
-    Array.from(imageImportsMap.entries()).forEach(([filename, importName]) => {
-      imports.push(`import ${importName} from './images-flat/${filename}';`);
-    });
-  }
-  
-  // Add SVG imports as React components
-  if (svgImportsMap.size > 0) {
-    Array.from(svgImportsMap.entries()).forEach(([filename, importName]) => {
-      imports.push(`import { ReactComponent as ${importName} } from './images-flat/${filename}';`);
-    });
-  }
-  
-  return imports.join('\n');
+  return Array.from(imageImportsMap.entries())
+    .map(([filename, importName]) => 
+      `import ${importName} from './images-flat/${filename}';`
+    )
+    .join('\n');
 }
 
 /**
@@ -505,22 +492,7 @@ function convertHTMLtoJSX(html) {
         
         // Handle image tags specifically to prepare for imports
         if (tagName === 'img' && attributes.src) {
-          const fixedSrc = fixHtmlImagePath(attributes.src);
-          
-          // Check if this is an SVG that should be converted to a component
-          if (fixedSrc.startsWith('{') && fixedSrc.endsWith('}')) {
-            // This is an SVG component reference
-            const componentName = fixedSrc.slice(1, -1); // Remove curly braces
-            
-            // Convert img tag to SVG component
-            // Store the component info to render as a self-closing component
-            attributes._svgComponent = componentName;
-            attributes._originalTag = 'img';
-            // Remove src since we'll use the component instead
-            delete attributes.src;
-          } else {
-            attributes.src = fixedSrc;
-          }
+          attributes.src = fixHtmlImagePath(attributes.src);
         }
         
         // Skip problematic tags for React
@@ -558,45 +530,18 @@ function convertHTMLtoJSX(html) {
         
         // If not in body tag, store content in case no body tag is found
         if (!inBodyTag) {
-          // Check if this should be converted to an SVG component
-          if (attributes._svgComponent) {
-            // Render as SVG component instead of img tag
-            const componentName = attributes._svgComponent;
-            // Extract other attributes (excluding our internal ones)
-            const otherAttrs = {...attributes};
-            delete otherAttrs._svgComponent;
-            delete otherAttrs._originalTag;
-            
-            const tag = `<${componentName}${convertAttributes(otherAttrs)} />`;
-            outputBeforeBodyTag += tag;
-          } else {
-            const isSelfClosing = selfClosingTags.has(tagName);
-            const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
-            outputBeforeBodyTag += tag;
-          }
+          const isSelfClosing = selfClosingTags.has(tagName);
+          const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
+          outputBeforeBodyTag += tag;
           return;
         }
         
         // Output tags if we're inside the body
-        // Check if this should be converted to an SVG component
-        if (attributes._svgComponent) {
-          // Render as SVG component instead of img tag
-          const componentName = attributes._svgComponent;
-          // Extract other attributes (excluding our internal ones)
-          const otherAttrs = {...attributes};
-          delete otherAttrs._svgComponent;
-          delete otherAttrs._originalTag;
-          
-          const tag = `<${componentName}${convertAttributes(otherAttrs)} />`;
-          output += tag;
-          stack.push({ tag: componentName, selfClosing: true });
-        } else {
-          const isSelfClosing = selfClosingTags.has(tagName);
-          const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
-          output += tag;
-          if (!isSelfClosing) stack.push({ tag: tagName, selfClosing: false });
-          else stack.push({ tag: tagName, selfClosing: true });
-        }
+        const isSelfClosing = selfClosingTags.has(tagName);
+        const tag = `<${tagName}${convertAttributes(attributes)}${isSelfClosing ? " />" : ">"}`;
+        output += tag;
+        if (!isSelfClosing) stack.push({ tag: tagName, selfClosing: false });
+        else stack.push({ tag: tagName, selfClosing: true });
       },
 
       ontext(text) {
