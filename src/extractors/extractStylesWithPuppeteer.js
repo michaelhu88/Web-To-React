@@ -3,8 +3,6 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const downloadExternalCSS = require("./downloadExternalCSS");
-const { extractFonts } = require("./extractFonts");
-const { extractImages } = require("./extractImages");
 
 /**
  * Fix all asset paths in CSS content to use the correct flat directories
@@ -258,25 +256,8 @@ async function extractStylesWithPuppeteer(url, outputDir = path.resolve(__dirnam
       });
     }
     
-    // 5. Extract fonts from CSS files
-    console.log(`\n📦 Extracting fonts from CSS files...`);
-    const { fontPaths, fontFaceCssPath } = await extractFonts(renderedHTML, cssFiles, url, outputDir);
-    
-    // Add font-faces.css to the cssFiles list if it was created
-    if (fontFaceCssPath) {
-      cssFiles.push({
-        url: url,
-        content: fs.readFileSync(path.join(outputDir, fontFaceCssPath), 'utf-8'),
-        filename: fontFaceCssPath,
-        id: 'font-faces',
-        media: 'all'
-      });
-      console.log(`✅ Added ${fontFaceCssPath} to style imports`);
-    }
-    
-    // 6. Extract images from HTML and CSS
-    console.log(`\n🖼️ Extracting images from HTML and CSS...`);
-    const { processedImages, updatedHtml } = await extractImages(renderedHTML, cssFiles, url, outputDir);
+    // Note: Asset extraction (fonts and images) is now handled by processRoute.js
+    // to avoid duplication and ensure proper route-specific directory management
     
     // After everything else is done, process all CSS files to fix any remaining asset path issues
     console.log(`\n🔧 Post-processing CSS files to fix asset paths...`);
@@ -302,10 +283,8 @@ async function extractStylesWithPuppeteer(url, outputDir = path.resolve(__dirnam
     console.log('\n🎉 Style extraction complete!');
     
     return {
-      html: updatedHtml,
-      cssFiles,
-      fontPaths,
-      imagesPaths: processedImages
+      html: renderedHTML,
+      cssFiles
     };
   } finally {
     await browser.close();

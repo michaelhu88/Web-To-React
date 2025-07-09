@@ -14,6 +14,7 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const processRoute = require('./src/processors/processRoute');
 const { setupTailwind, fixCssLayerDirectives } = require('./scripts/setupTailwind');
+const findFirstLevelRoutes = require('./src/extractors/findRoutesWithPuppeteer');
 
 async function convertToReactComponent(url, options = {}) {
   const {
@@ -100,6 +101,32 @@ async function convertToReactComponent(url, options = {}) {
     
   } catch (error) {
     console.error(`❌ Error: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Discover routes from a starting URL and populate routes.json
+ * @param {string} startUrl - The starting URL to discover routes from
+ * @param {string} outputDir - The output directory to save routes.json
+ * @returns {Promise<void>}
+ */
+async function discoverAndPopulateRoutes(startUrl, outputDir) {
+  console.log(`🔍 Discovering routes from: ${startUrl}`);
+  
+  // Ensure output directory exists
+  fs.mkdirSync(outputDir, { recursive: true });
+  
+  const routesFilePath = path.join(outputDir, 'routes.json');
+  
+  try {
+    // Discover routes using the Puppeteer script
+    const discoveredRoutes = await findFirstLevelRoutes(startUrl, routesFilePath);
+    
+    console.log(`✅ Discovered ${discoveredRoutes.length} routes and saved to routes.json`);
+    return discoveredRoutes;
+  } catch (error) {
+    console.error(`❌ Error discovering routes: ${error.message}`);
     throw error;
   }
 }
@@ -606,19 +633,27 @@ if (require.main === module) {
     outputDir
   };
 
-  // If routes.json exists, process routes from it, otherwise process the single URL
-  if (hasRoutesFile) {
-    console.log('🔄 Processing routes from routes.json');
-    processRoutesFromJson(outputDir, options)
+  // If URL is provided, always discover routes first, then process them
+  if (url) {
+    console.log('🔄 Starting automated workflow with route discovery');
+    
+    // First, discover routes and populate routes.json
+    discoverAndPopulateRoutes(url, outputDir)
+      .then(() => {
+        // Then process all discovered routes
+        console.log('🔄 Processing discovered routes');
+        return processRoutesFromJson(outputDir, options);
+      })
       .then(() => console.log('✨ All routes processed successfully!'))
       .catch(err => {
         console.error('❌ Error:', err);
         process.exit(1);
       });
-  } else if (url) {
-    // Process a single route from the command line arguments
-    convertToReactComponent(url, options)
-      .then(() => console.log('✨ Done!'))
+  } else if (hasRoutesFile) {
+    // Fallback: if no URL provided but routes.json exists, process existing routes
+    console.log('🔄 Processing existing routes from routes.json (no URL provided)');
+    processRoutesFromJson(outputDir, options)
+      .then(() => console.log('✨ All routes processed successfully!'))
       .catch(err => {
         console.error('❌ Error:', err);
         process.exit(1);
@@ -626,7 +661,7 @@ if (require.main === module) {
   } else {
     console.error('❌ Error: No URL provided and no routes.json found in output directory');
     console.error('Usage: node html-to-react.js <url> [component-name] [--create-app/-c] [--app-name/-a app-name] [--include-computed/-i] [--tailwind/-t]');
-    console.error('   OR: node html-to-react.js (with routes.json in output directory)');
+    console.error('   OR: node html-to-react.js (with existing routes.json in output directory)');
     console.error('Example: node html-to-react.js https://example.com MyComponent --create-app --app-name my-react-app --tailwind');
     process.exit(1);
   }
@@ -634,5 +669,6 @@ if (require.main === module) {
 
 module.exports = {
   convertToReactComponent,
-  processRoutesFromJson
+  processRoutesFromJson,
+  discoverAndPopulateRoutes
 }; 

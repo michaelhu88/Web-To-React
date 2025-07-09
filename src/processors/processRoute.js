@@ -12,6 +12,7 @@ const extractRenderedHTML = require('../extractors/extractHTMLWithPuppeteer');
 const extractStylesWithPuppeteer = require('../extractors/extractStylesWithPuppeteer');
 const { convertHTMLtoJSX, generateCSSFromVars, cssVarMap, getImageImports, setSanitizedFilenameMap } = require('../converters/convertHTMLtoJSX');
 const { extractImages } = require('../extractors/extractImages');
+const { extractFonts } = require('../extractors/extractFonts');
 
 /**
  * Fix all asset paths in CSS content to use the correct flat directories
@@ -113,7 +114,23 @@ async function processRoute(url, componentName, isDeprecated = false, isMultiPag
    console.log(`🎨 Extracting CSS styles...`);
    const extractedStyles = await extractStylesWithPuppeteer(url, stylesDir);
   
-   // 3. Extract and download images
+   // 3. Extract fonts from CSS files
+   console.log(`📦 Extracting fonts for ${componentName}...`);
+   const { fontPaths, fontFaceCssPath } = await extractFonts(renderedHTML, extractedStyles.cssFiles, url, stylesDir);
+   
+   // Add font-faces.css to the cssFiles list if it was created
+   if (fontFaceCssPath) {
+     extractedStyles.cssFiles.push({
+       url: url,
+       content: fs.readFileSync(path.join(stylesDir, fontFaceCssPath), 'utf-8'),
+       filename: fontFaceCssPath,
+       id: 'font-faces',
+       media: 'all'
+     });
+     console.log(`✅ Added ${fontFaceCssPath} to style imports for ${componentName}`);
+   }
+  
+   // 4. Extract and download images
    console.log(`🖼️ Processing images for ${componentName}...`);
    const { processedImages, updatedHtml, imageMap } = await extractImages(
      renderedHTML,
@@ -125,7 +142,7 @@ async function processRoute(url, componentName, isDeprecated = false, isMultiPag
    // Pass the sanitized filename mapping to the JSX converter
    setSanitizedFilenameMap(imageMap);
   
-   // 4. Convert to JSX
+   // 5. Convert to JSX
    const jsxOutputPath = path.join(pagesDir, `${componentName}.jsx`);
    console.log(`⚛️ Converting HTML to JSX for ${componentName}...`);
    const jsxContent = convertHTMLtoJSX(updatedHtml || renderedHTML);
@@ -133,7 +150,7 @@ async function processRoute(url, componentName, isDeprecated = false, isMultiPag
    // Get image imports
    const imageImports = getImageImports();
   
-   // 5. Create style imports
+   // 6. Create style imports
    const styleImports = [];
    
    // Rename style.css to componentName.css to avoid naming conflicts in multi-page sites
@@ -240,7 +257,8 @@ ${jsxContent}${addNavigationImport && componentName !== 'Home' ? '\n      <div c
      componentPath: jsxOutputPath,
      htmlPath: htmlOutputPath,
      url,
-     imagesProcessed: processedImages?.length || 0
+     imagesProcessed: processedImages?.length || 0,
+     fontsProcessed: fontPaths?.length || 0
    };
   
  } catch (error) {

@@ -94,7 +94,13 @@ function convertStyle(styleString) {
       cssVars[prop] = value;
     } else {
       const jsProp = prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-      jsStyles.push(`${jsProp}: '${value}'`);
+      // Handle url() values with proper quote escaping
+      if (value.includes('url(') && value.includes("'")) {
+        // Use double quotes for the outer wrapper when value contains single quotes
+        jsStyles.push(`${jsProp}: "${value}"`);
+      } else {
+        jsStyles.push(`${jsProp}: '${value}'`);
+      }
     }
   });
 
@@ -183,15 +189,16 @@ function fixHtmlImagePath(src) {
 
 /**
  * Generate an import variable name for any image file
- * @param {string} filename - The image filename
+ * Uses already sanitized filename from sanitizeFilename function
+ * @param {string} filename - The sanitized image filename
  * @returns {string} - A valid JavaScript variable name
  */
 function generateImageImportName(filename) {
-  // Remove extension and sanitize for variable name
+  // Remove extension from sanitized filename
   const baseName = filename.replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '');
-  // Convert to camelCase and remove non-alphanumeric characters
+  
+  // Convert underscores to camelCase (filename is already sanitized)
   const variableName = baseName
-    .replace(/[^a-zA-Z0-9]/g, '_')
     .split('_')
     .map((part, index) => {
       if (index === 0) {
@@ -201,11 +208,7 @@ function generateImageImportName(filename) {
     })
     .join('');
   
-  // Ensure it starts with a letter and add suffix based on file type
-  const cleanName = variableName.charAt(0).toLowerCase() + variableName.slice(1);
-  const extension = filename.split('.').pop().toLowerCase();
-  
-  return cleanName + extension.charAt(0).toUpperCase() + extension.slice(1);
+  return variableName;
 }
 
 /**

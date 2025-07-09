@@ -13,23 +13,37 @@ function sanitizeFilename(name) {
     // Try to decode percent-encoded sequences first
     let decoded = decodeURIComponent(name);
     
-    // Replace spaces and special characters with underscores
-    // Keep only alphanumeric chars, dots, hyphens, and underscores
-    let sanitized = decoded.replace(/[^a-zA-Z0-9._-]/g, '_');
+    // Extract file extension
+    const extMatch = decoded.match(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i);
+    const extension = extMatch ? extMatch[0] : '';
+    const basename = extension ? decoded.slice(0, -extension.length) : decoded;
     
-    // Ensure it doesn't start with a number or dot (invalid import)
-    if (/^[0-9.]/.test(sanitized)) {
-      sanitized = `img_${sanitized}`;
-    }
+    // Replace all special characters with underscores (dots, hashes, etc.)
+    let sanitized = basename.replace(/[^a-zA-Z0-9]/g, '_');
     
-    return sanitized;
+    // Remove multiple consecutive underscores
+    sanitized = sanitized.replace(/_+/g, '_');
+    
+    // Remove leading/trailing underscores
+    sanitized = sanitized.replace(/^_+|_+$/g, '');
+    
+    // Prepend underscore to all filenames as requested
+    sanitized = `_${sanitized}`;
+    
+    // Add back the extension
+    return sanitized + extension;
   } catch (error) {
     // If decoding fails, just sanitize the original
-    let sanitized = name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    if (/^[0-9.]/.test(sanitized)) {
-      sanitized = `img_${sanitized}`;
-    }
-    return sanitized;
+    const extMatch = name.match(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i);
+    const extension = extMatch ? extMatch[0] : '';
+    const basename = extension ? name.slice(0, -extension.length) : name;
+    
+    let sanitized = basename.replace(/[^a-zA-Z0-9]/g, '_');
+    sanitized = sanitized.replace(/_+/g, '_');
+    sanitized = sanitized.replace(/^_+|_+$/g, '');
+    sanitized = `_${sanitized}`;
+    
+    return sanitized + extension;
   }
 }
 
@@ -59,7 +73,14 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
   // Extract from <img> tags
   $('img').each((_, el) => {
     const src = $(el).attr('src');
-    if (src) imageUrls.add(src);
+    const dataSrc = $(el).attr('data-src'); // Common lazy loading attribute
+    const dataOriginal = $(el).attr('data-original'); // Another lazy loading pattern
+    const dataLazy = $(el).attr('data-lazy'); // Yet another lazy loading pattern
+    
+    if (src && !src.startsWith('data:')) imageUrls.add(src); // Skip data URLs
+    if (dataSrc && !dataSrc.startsWith('data:')) imageUrls.add(dataSrc); // Include lazy-loaded images
+    if (dataOriginal && !dataOriginal.startsWith('data:')) imageUrls.add(dataOriginal);
+    if (dataLazy && !dataLazy.startsWith('data:')) imageUrls.add(dataLazy);
     
     // Also check srcset attribute
     const srcset = $(el).attr('srcset');
@@ -67,7 +88,10 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
       // Parse srcset format: "url1 1x, url2 2x, ..."
       srcset.split(',').forEach(item => {
         const parts = item.trim().split(' ');
-        if (parts.length >= 1) imageUrls.add(parts[0].trim());
+        if (parts.length >= 1) {
+          const url = parts[0].trim();
+          if (!url.startsWith('data:')) imageUrls.add(url);
+        }
       });
     }
   });
@@ -178,19 +202,45 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
       // Download to flat directory only
       const flatPath = path.join(imagesFlatDir, sanitizedFilename);
       
-      // Download image file
-      const response = await axios({
-        method: 'get',
-        url: fullImageUrl,
-        responseType: 'arraybuffer',
-        // Handle redirects and don't fail on SSL errors
-        maxRedirects: 5,
-        timeout: 10000, // 10 second timeout
-        validateStatus: status => status < 400,
-        httpsAgent: new (require('https').Agent)({
-          rejectUnauthorized: false
-        })
-      });
+      // Download image file with retry logic
+      let response;
+      let lastError;
+      const maxRetries = 2;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await axios({
+            method: 'get',
+            url: fullImageUrl,
+            responseType: 'arraybuffer',
+            headers: {
+              // Add user agent to avoid bot detection
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+              // Add referer to help with some auth issues
+              'Referer': baseUrl
+            },
+            // Handle redirects and don't fail on SSL errors
+            maxRedirects: 5,
+            timeout: 15000, // 15 second timeout
+            validateStatus: status => status < 400,
+            httpsAgent: new (require('https').Agent)({
+              rejectUnauthorized: false
+            })
+          });
+          break; // Success, exit retry loop
+        } catch (err) {
+          lastError = err;
+          if (attempt < maxRetries) {
+            console.log(`   Retry ${attempt}/${maxRetries - 1} for: ${imageUrl}`);
+            // Wait before retry (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          }
+        }
+      }
+      
+      if (!response) {
+        throw lastError; // Re-throw the last error if all retries failed
+      }
       
       // Write to flat directory only
       fs.writeFileSync(flatPath, response.data);
@@ -204,7 +254,50 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
       });
       
     } catch (err) {
-      console.warn(`⚠️ Failed to download image ${imageUrl}: ${err.message}`);
+      let errorType = 'Unknown';
+      if (err.response) {
+        errorType = `HTTP ${err.response.status}`;
+        if (err.response.status === 404) errorType += ' (Not Found)';
+        if (err.response.status === 403) errorType += ' (Forbidden/Auth Required)';
+        if (err.response.status === 429) errorType += ' (Rate Limited)';
+      } else if (err.code === 'ENOTFOUND') {
+        errorType = 'DNS Resolution Failed';
+      } else if (err.code === 'ETIMEDOUT') {
+        errorType = 'Request Timeout';
+      } else if (err.message.includes('Invalid URL')) {
+        errorType = 'Invalid URL Format';
+      }
+      
+      console.warn(`⚠️ Failed to download image: ${imageUrl}`);
+      console.warn(`   Error: ${errorType} - ${err.message}`);
+      
+      // Optional: Create a placeholder for completely failed images
+      // This can help identify missing images in the UI during development
+      if (process.env.CREATE_IMAGE_PLACEHOLDERS === 'true') {
+        try {
+          const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" viewBox="0 0 200 150">
+            <rect width="200" height="150" fill="#f0f0f0" stroke="#ccc"/>
+            <text x="100" y="75" text-anchor="middle" fill="#999" font-family="Arial" font-size="12">
+              Image Failed to Load
+            </text>
+            <text x="100" y="95" text-anchor="middle" fill="#666" font-family="Arial" font-size="10">
+              ${sanitizedFilename}
+            </text>
+          </svg>`;
+          
+          const placeholderPath = path.join(imagesFlatDir, sanitizedFilename.replace(/\.(png|jpg|jpeg|gif|webp|avif)$/i, '.svg'));
+          fs.writeFileSync(placeholderPath, placeholderSvg);
+          console.log(`📦 Created placeholder for failed image: ${path.basename(placeholderPath)}`);
+          
+          processedImages.push({
+            originalUrl: imageUrl,
+            flatPath: `images-flat/${path.basename(placeholderPath)}`,
+            sanitizedFilename: path.basename(placeholderPath)
+          });
+        } catch (placeholderErr) {
+          console.warn(`   Could not create placeholder: ${placeholderErr.message}`);
+        }
+      }
     }
   });
   
@@ -266,13 +359,26 @@ async function extractImages(html, cssFiles, baseUrl, outputDir) {
     updatedHtml = updatedHtml.replace(styleRegex, `$1${flatPath}$2`);
   });
   
-  console.log(`🎉 Image extraction complete. Downloaded ${processedImages.length} images.`);
+  const totalImagesFound = imageUrls.size;
+  const totalImagesDownloaded = processedImages.length;
+  const failedDownloads = totalImagesFound - totalImagesDownloaded;
+
+  console.log(`🎉 Image extraction complete. Downloaded ${totalImagesDownloaded}/${totalImagesFound} images.`);
+  if (failedDownloads > 0) {
+    console.warn(`⚠️ ${failedDownloads} images failed to download and will not be available for JSX imports.`);
+  }
   
+  // Create imageMap only from successfully downloaded images
+  const imageMap = {};
+  processedImages.forEach(({originalUrl, sanitizedFilename}) => {
+    imageMap[originalUrl] = sanitizedFilename;
+  });
+
   return { 
     processedImages, 
     updatedHtml,
     imagesFlatDirName: 'images-flat', // Return the flat directory name for reference
-    imageMap: Object.fromEntries(urlToSanitizedMap) // Return mapping of URLs to sanitized filenames for JSX
+    imageMap // Return mapping of only successfully downloaded images for JSX imports
   };
 }
 
