@@ -107,7 +107,7 @@ async function extractStylesWithPuppeteer(url, outputDir = path.resolve(__dirnam
     fs.mkdirSync(outputDir, { recursive: true });
     
     // Navigate to the URL and wait until network is idle
-    await page.goto(url, { waitUntil: "networkidle0", timeout: 60000 });
+    await page.goto(url, { waitUntil: "networkidle0", timeout: 120000 });
     
     // Get the fully rendered HTML
     const renderedHTML = await page.content();

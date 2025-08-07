@@ -19,7 +19,7 @@ async function extractRenderedHTML(url, outputPath = null) {
     // Wait until network is idle to ensure all resources are loaded
     await page.goto(url, { 
       waitUntil: ['load', 'networkidle0'],
-      timeout: 60000 // 60 second timeout
+      timeout: 120000 // 120 second timeout
     });
     
     // Optional wait to ensure JS frameworks have finished rendering

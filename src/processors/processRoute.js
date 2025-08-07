@@ -150,7 +150,7 @@ async function processRoute(url, componentName, isDeprecated = false, isMultiPag
    // Get image imports
    const imageImports = getImageImports();
   
-   // 6. Create style imports
+   // 6. Create style imports - only import the 4 required CSS files
    const styleImports = [];
    
    // Rename style.css to componentName.css to avoid naming conflicts in multi-page sites
@@ -161,38 +161,25 @@ async function processRoute(url, componentName, isDeprecated = false, isMultiPag
      fs.renameSync(styleFilePath, componentStylePath);
    }
 
-   // Add font-faces CSS first (if it exists)
+   // Add exactly 4 CSS imports in order (only if files exist):
+   // 1. font-faces.css
    const fontFacesCssPath = path.join(stylesDir, "font-faces.css");
    if (fs.existsSync(fontFacesCssPath)) {
      styleImports.push(`import './font-faces.css';`);
    }
   
-   // Add imports for inline styles
-   const inlineCssPath = path.join(stylesDir, "App.css");
-   if (fs.existsSync(inlineCssPath)) {
+   // 2. App.css (inline styles)
+   const appCssPath = path.join(stylesDir, "App.css");
+   if (fs.existsSync(appCssPath)) {
      styleImports.push(`import './App.css';`);
    }
    
-   // Add import for the component-specific CSS file
+   // 3. Component-specific CSS file
    if (fs.existsSync(componentStylePath)) {
      styleImports.push(`import './${componentName}.css';`);
    }
-  
-   // Add imports for external stylesheets
-   if (fs.existsSync(stylesDir)) {
-     const externalStyleFiles = fs.readdirSync(stylesDir)
-       .filter(file => file.endsWith('.css') &&
-         file !== 'App.css' &&
-         file !== 'font-faces.css' &&
-         file !== `${componentName}.css` && 
-         file !== 'computed.css' &&
-         file !== 'computed.css.unused' &&
-         file !== 'katex.min.css');
-    
-     externalStyleFiles.forEach(file => {
-       styleImports.push(`import './${file}';`);
-     });
-   }
+   
+   // 4. custom-vars.css (will be added later if CSS variables exist)
   
    // Generate CSS for custom variables if needed
    if (Object.keys(cssVarMap).length > 0) {

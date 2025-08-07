@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Rules to follow
+0. Don't ever read the output file, we are building a generation workflow, so don't try and edit the output, we are trying to optimize the workflow.
 1. First think through the problem, read the codebase for relevant files, and write a plan to tasks/todo.md.
 2. The plan should have a list of todo items that you can check off as you complete them
 3. Before you begin working, check in with me and I will verify the plan.
