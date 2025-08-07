@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const downloadExternalCSS = require("./downloadExternalCSS");
+const { createBrowserWithProxy, createAuthenticatedPage } = require('../utils/puppeteerConfig');
 
 /**
  * Fix all asset paths in CSS content to use the correct flat directories
@@ -98,15 +99,15 @@ function shouldSkipResource(url) {
  * @returns {Promise<Object>} - Object containing style information
  */
 async function extractStylesWithPuppeteer(url, outputDir = path.resolve(__dirname, "../../output/public")) {
-  const browser = await puppeteer.launch({ headless: "new" });
-  const page = await browser.newPage();
+  const browser = await createBrowserWithProxy({ headless: "new" });
+  const page = await createAuthenticatedPage(browser);
   
   try {
     // Create output directory
     fs.mkdirSync(outputDir, { recursive: true });
     
     // Navigate to the URL and wait until network is idle
-    await page.goto(url, { waitUntil: "networkidle0" });
+    await page.goto(url, { waitUntil: "networkidle0", timeout: 60000 });
     
     // Get the fully rendered HTML
     const renderedHTML = await page.content();

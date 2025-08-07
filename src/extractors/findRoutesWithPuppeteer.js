@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const { createBrowserWithProxy, createAuthenticatedPage } = require('../utils/puppeteerConfig');
 
 /**
  * Helper function to wait for a specified time
@@ -166,9 +167,9 @@ async function findFirstLevelRoutes(
   const parsedStartUrl = new URL(normalizedStartUrl);
   const baseUrl = `${parsedStartUrl.protocol}//${parsedStartUrl.host}`;
   
-  const browser = await puppeteer.launch({
+  const browser = await createBrowserWithProxy({
     headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args: ['--disable-dev-shm-usage']
   });
   
   // Store discovered routes as an array of objects
@@ -183,7 +184,7 @@ async function findFirstLevelRoutes(
   const visitedUrls = new Set([normalizedStartUrl]);
   
   try {
-    const page = await browser.newPage();
+    const page = await createAuthenticatedPage(browser);
     
     // Set viewport to a reasonable desktop size
     await page.setViewport({ width: 1280, height: 800 });
@@ -290,7 +291,7 @@ async function findFirstLevelRoutes(
       }
       
       // For each element, create a new page so we don't lose our place
-      const newPage = await browser.newPage();
+      const newPage = await createAuthenticatedPage(browser);
       await newPage.setViewport({ width: 1280, height: 800 });
       
       try {

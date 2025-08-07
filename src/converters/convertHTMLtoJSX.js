@@ -194,19 +194,9 @@ function fixHtmlImagePath(src) {
  * @returns {string} - A valid JavaScript variable name
  */
 function generateImageImportName(filename) {
-  // Remove extension from sanitized filename
-  const baseName = filename.replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '');
-  
-  // Convert underscores to camelCase (filename is already sanitized)
-  const variableName = baseName
-    .split('_')
-    .map((part, index) => {
-      if (index === 0) {
-        return part.toLowerCase();
-      }
-      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
-    })
-    .join('');
+  // Remove extension from sanitized filename and use it directly as variable name
+  // The filename is already sanitized and safe to use as a JavaScript variable
+  const variableName = filename.replace(/\.(svg|png|jpg|jpeg|gif|webp|avif)$/i, '');
   
   return variableName;
 }

@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const { createBrowserWithProxy, createAuthenticatedPage } = require('../utils/puppeteerConfig');
 
 /**
  * Extracts fully rendered HTML from a URL using Puppeteer
@@ -11,8 +12,8 @@ const fs = require('fs');
  */
 async function extractRenderedHTML(url, outputPath = null) {
   console.log(`📄 Extracting fully rendered HTML from: ${url}`);
-  const browser = await puppeteer.launch();
-  const page = await browser.newPage();
+  const browser = await createBrowserWithProxy();
+  const page = await createAuthenticatedPage(browser);
   
   try {
     // Wait until network is idle to ensure all resources are loaded

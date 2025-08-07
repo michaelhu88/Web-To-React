@@ -27,7 +27,7 @@ async function convertToReactComponent(url, options = {}) {
     createReactApp = false,
     reactAppName = componentName.toLowerCase() + '-app',
     includeComputedStyles = false,
-    setupTailwindCSS = false
+    setupTailwindCSS = true
   } = options;
 
   console.log(`🚀 Starting conversion process for: ${url}`);
@@ -82,16 +82,6 @@ async function convertToReactComponent(url, options = {}) {
     }
     
     console.log(`\n🎉 Conversion process complete!\n`);
-    
-    // 8. Create a React app if requested
-    if (createReactApp) {
-      await createReactProject(componentName, reactAppName, {
-        componentPath: jsxOutputPath,
-        stylesDir,
-        includeComputedStyles,
-        setupTailwindCSS
-      });
-    }
     
     return {
       componentPath: jsxOutputPath,
