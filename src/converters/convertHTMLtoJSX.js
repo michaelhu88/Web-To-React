@@ -64,6 +64,24 @@ const selfClosingTags = new Set([
 ]);
 
 /**
+ * Webflow animation attributes that should be filtered out.
+ * These attributes are used by Webflow's JavaScript animation system
+ * and are not standard CSS, so they should not be passed to JSX.
+ */
+const webflowAnimationAttributes = new Set([
+  "data-w-id",
+  "data-w-animation",
+  "data-w-tab",
+  "data-w-trigger",
+  "data-w-action",
+  "data-w-target",
+  "data-w-tween",
+  "data-w-loop",
+  "data-w-scroll",
+  "data-w-parallax"
+]);
+
+/**
  * Converts HTML event names (e.g., onclick) to JSX camelCase format (e.g., onClick).
  * @param {string} attr - The attribute name
  * @returns {string} - The JSX-style event name
@@ -256,6 +274,11 @@ function convertAttributes(attrs) {
     const keyLower = key.toLowerCase();
 
     if (!value || value === "" || value === "{}" || value === "[]" || value === "null") {
+      continue;
+    }
+
+    // Skip Webflow animation attributes
+    if (webflowAnimationAttributes.has(keyLower)) {
       continue;
     }
 

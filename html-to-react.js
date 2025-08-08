@@ -12,7 +12,7 @@
 const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const processRoute = require('./src/processors/processRoute');
+const { getProcessor, processMultipleRoutes, STRATEGIES } = require('./src/processors');
 const { setupTailwind, fixCssLayerDirectives } = require('./scripts/setupTailwind');
 const findFirstLevelRoutes = require('./src/extractors/findRoutesWithPuppeteer');
 
@@ -27,16 +27,18 @@ async function convertToReactComponent(url, options = {}) {
     createReactApp = false,
     reactAppName = componentName.toLowerCase() + '-app',
     includeComputedStyles = false,
-    setupTailwindCSS = true
+    setupTailwindCSS = true,
+    strategy = STRATEGIES.MODULAR
   } = options;
 
   console.log(`🚀 Starting conversion process for: ${url}`);
   console.log(`📂 Output directories: \n  HTML: ${htmlDir}\n  Styles: ${stylesDir}\n  Pages: ${pagesDir}`);
-  console.log(`🔧 Options: \n  Include computed styles: ${includeComputedStyles ? 'Yes' : 'No'}\n  Setup Tailwind CSS: ${setupTailwindCSS ? 'Yes' : 'No'}`);
+  console.log(`🔧 Options: \n  Include computed styles: ${includeComputedStyles ? 'Yes' : 'No'}\n  Setup Tailwind CSS: ${setupTailwindCSS ? 'Yes' : 'No'}\n  CSS Strategy: ${strategy}`);
   
   try {
-    // Process the route using our modular processor (handles steps 1-5)
-    const result = await processRoute(url, componentName, false, false, outputDir);
+    // Process the route using the specified strategy processor
+    const processor = getProcessor(strategy);
+    const result = await processor(url, componentName, false, false, outputDir);
     
     // Get the component path from the processor result
     const jsxOutputPath = result.componentPath;
@@ -57,9 +59,9 @@ async function convertToReactComponent(url, options = {}) {
       }
     }
     
-    // 6. Setup Tailwind CSS if requested
-    if (setupTailwindCSS) {
-      console.log(`\n🌬️ Setting up Tailwind CSS...`);
+    // 6. Setup Tailwind CSS if requested and using modular strategy
+    if (setupTailwindCSS && strategy === STRATEGIES.MODULAR) {
+      console.log(`\n🌬️ Setting up Tailwind CSS for modular strategy...`);
       setupTailwind();
       
       // Fix any CSS files that might use @layer directives
@@ -79,6 +81,8 @@ async function convertToReactComponent(url, options = {}) {
         fs.writeFileSync(componentPath, componentContent);
         console.log(`✅ Added Tailwind CSS import to component`);
       }
+    } else if (setupTailwindCSS && strategy === STRATEGIES.GLOBAL) {
+      console.log(`\n⚠️ Tailwind CSS skipped: Global strategy uses consolidated CSS instead`);
     }
     
     console.log(`\n🎉 Conversion process complete!\n`);
@@ -146,37 +150,21 @@ async function processRoutesFromJson(outputDir = path.resolve(__dirname, 'output
     
     console.log(`📋 Found ${routesData.length} routes in routes.json`);
     
-    // Store createReactApp option and then disable it temporarily 
-    // to prevent creating multiple React apps during route processing
+    // Store createReactApp option 
     const shouldCreateReactApp = options.createReactApp;
-    const tempOptions = { ...options, createReactApp: false };
     
-    // Process each route
-    const results = [];
-    
-    for (let i = 0; i < routesData.length; i++) {
-      const route = routesData[i];
-      
+    // Filter out invalid routes
+    const validRoutes = routesData.filter(route => {
       if (!route.url || !route.componentName) {
-        console.warn(`⚠️ Skipping invalid route at index ${i}: missing url or componentName`);
-        continue;
+        console.warn(`⚠️ Skipping invalid route: missing url or componentName`);
+        return false;
       }
-      
-      console.log(`\n📄 Processing route ${i + 1}/${routesData.length}: ${route.url} => ${route.componentName}`);
-      
-      // Set options for this specific route
-      const routeOptions = { ...tempOptions, componentName: route.componentName };
-      
-      try {
-        const result = await convertToReactComponent(route.url, routeOptions);
-        results.push(result);
-      } catch (error) {
-        console.error(`❌ Error processing route ${route.url}: ${error.message}`);
-        // Continue with next route even if this one failed
-      }
-    }
+      return true;
+    });
     
-    console.log(`\n✅ Processed ${results.length}/${routesData.length} routes successfully`);
+    // Process all routes using the specified strategy
+    const strategy = options.strategy || STRATEGIES.MODULAR;
+    const results = await processMultipleRoutes(validRoutes, strategy, outputDir, options);
     
     // Create a single React app with all components if requested
     if (shouldCreateReactApp && results.length > 0) {
@@ -189,7 +177,8 @@ async function processRoutesFromJson(outputDir = path.resolve(__dirname, 'output
       await createMultiComponentReactProject(results, mainComponentName, reactAppName, {
         stylesDir: path.join(outputDir, 'src/styles'),
         includeComputedStyles: options.includeComputedStyles,
-        setupTailwindCSS: options.setupTailwindCSS
+        setupTailwindCSS: options.setupTailwindCSS,
+        strategy: options.strategy
       });
     }
     
@@ -211,12 +200,13 @@ async function createMultiComponentReactProject(componentResults, mainComponentN
   const {
     stylesDir,
     includeComputedStyles = false,
-    setupTailwindCSS = false
+    setupTailwindCSS = false,
+    strategy = STRATEGIES.MODULAR
   } = options;
   
   const projectPath = path.join(process.cwd(), '..', projectName);
   
-  console.log(`\n📦 Creating React app in ../${projectName} with multiple components...`);
+  console.log(`\n📦 Creating React app in ../${projectName} with multiple components using ${strategy} CSS strategy...`);
   
   try {
     // Check if the project directory already exists
@@ -269,16 +259,21 @@ async function createMultiComponentReactProject(componentResults, mainComponentN
       // Source directory for this component in local output
       const sourcePageDir = path.join(__dirname, 'output', 'src', 'pages', componentName);
       
-      // Copy component-specific CSS file (named after the component)
-      const componentCssPath = path.join(sourcePageDir, `${componentName}.css`);
-      if (fs.existsSync(componentCssPath)) {
-        const targetCssPath = path.join(pageDir, `${componentName}.css`);
-        
-        // Read CSS content - paths should already be correct
-        let cssContent = fs.readFileSync(componentCssPath, 'utf8');
-        
-        fs.writeFileSync(targetCssPath, cssContent);
-        console.log(`✅ CSS file for ${componentName} copied to: ${targetCssPath}`);
+      // Copy component-specific CSS files only for modular strategy
+      if (strategy === STRATEGIES.MODULAR) {
+        // Copy component-specific CSS file (named after the component)
+        const componentCssPath = path.join(sourcePageDir, `${componentName}.css`);
+        if (fs.existsSync(componentCssPath)) {
+          const targetCssPath = path.join(pageDir, `${componentName}.css`);
+          
+          // Read CSS content - paths should already be correct
+          let cssContent = fs.readFileSync(componentCssPath, 'utf8');
+          
+          fs.writeFileSync(targetCssPath, cssContent);
+          console.log(`✅ CSS file for ${componentName} copied to: ${targetCssPath}`);
+        }
+      } else {
+        console.log(`ℹ️ Skipping component CSS for ${componentName} (using global CSS strategy)`);
       }
       
       // Copy ALL images to this page's images-flat folder
@@ -311,38 +306,61 @@ async function createMultiComponentReactProject(componentResults, mainComponentN
         console.log(`✅ Copied ${fontFiles.length} fonts to ${componentName}/fonts-flat/`);
       }
       
-      // Copy App.css if it exists and is imported by this component
-      if (componentContent.includes(`import './App.css'`)) {
-        const appCssPath = path.join(sourcePageDir, 'App.css');
-        if (fs.existsSync(appCssPath)) {
-          const targetAppCssPath = path.join(pageDir, 'App.css');
-          fs.copyFileSync(appCssPath, targetAppCssPath);
-          console.log(`✅ Copied App.css to: ${targetAppCssPath}`);
+      // Copy additional CSS files only for modular strategy
+      if (strategy === STRATEGIES.MODULAR) {
+        // Copy App.css if it exists and is imported by this component
+        if (componentContent.includes(`import './App.css'`)) {
+          const appCssPath = path.join(sourcePageDir, 'App.css');
+          if (fs.existsSync(appCssPath)) {
+            const targetAppCssPath = path.join(pageDir, 'App.css');
+            fs.copyFileSync(appCssPath, targetAppCssPath);
+            console.log(`✅ Copied App.css to: ${targetAppCssPath}`);
+          }
+        }
+        
+        // Copy font-faces.css if it exists and is imported by this component
+        if (componentContent.includes(`import './font-faces.css'`)) {
+          const fontFacesCssPath = path.join(sourcePageDir, 'font-faces.css');
+          if (fs.existsSync(fontFacesCssPath)) {
+            const targetFontFacesCssPath = path.join(pageDir, 'font-faces.css');
+            
+            // Read CSS content - paths should already be correct
+            let fontFacesContent = fs.readFileSync(fontFacesCssPath, 'utf8');
+            
+            fs.writeFileSync(targetFontFacesCssPath, fontFacesContent);
+            console.log(`✅ Copied font-faces.css to: ${targetFontFacesCssPath}`);
+          }
+        }
+        
+        // Copy custom-vars.css if it exists and is imported by this component
+        if (componentContent.includes(`import './custom-vars.css'`)) {
+          const customVarsCssPath = path.join(sourcePageDir, 'custom-vars.css');
+          if (fs.existsSync(customVarsCssPath)) {
+            const targetCustomVarsCssPath = path.join(pageDir, 'custom-vars.css');
+            fs.copyFileSync(customVarsCssPath, targetCustomVarsCssPath);
+            console.log(`✅ Copied custom-vars.css to: ${targetCustomVarsCssPath}`);
+          }
         }
       }
+    }
+    
+    // Copy global.css for global strategy
+    if (strategy === STRATEGIES.GLOBAL) {
+      console.log(`\n🌐 Copying global CSS file for global strategy...`);
       
-      // Copy font-faces.css if it exists and is imported by this component
-      if (componentContent.includes(`import './font-faces.css'`)) {
-        const fontFacesCssPath = path.join(sourcePageDir, 'font-faces.css');
-        if (fs.existsSync(fontFacesCssPath)) {
-          const targetFontFacesCssPath = path.join(pageDir, 'font-faces.css');
-          
-          // Read CSS content - paths should already be correct
-          let fontFacesContent = fs.readFileSync(fontFacesCssPath, 'utf8');
-          
-          fs.writeFileSync(targetFontFacesCssPath, fontFacesContent);
-          console.log(`✅ Copied font-faces.css to: ${targetFontFacesCssPath}`);
-        }
-      }
+      // Create shared directory in React app
+      const sharedDir = path.join(projectPath, 'src', 'shared');
+      fs.mkdirSync(sharedDir, { recursive: true });
       
-      // Copy custom-vars.css if it exists and is imported by this component
-      if (componentContent.includes(`import './custom-vars.css'`)) {
-        const customVarsCssPath = path.join(sourcePageDir, 'custom-vars.css');
-        if (fs.existsSync(customVarsCssPath)) {
-          const targetCustomVarsCssPath = path.join(pageDir, 'custom-vars.css');
-          fs.copyFileSync(customVarsCssPath, targetCustomVarsCssPath);
-          console.log(`✅ Copied custom-vars.css to: ${targetCustomVarsCssPath}`);
-        }
+      // Copy global.css from output to React app
+      const sourceGlobalCss = path.join(__dirname, 'output', 'src', 'shared', 'global.css');
+      const targetGlobalCss = path.join(sharedDir, 'global.css');
+      
+      if (fs.existsSync(sourceGlobalCss)) {
+        fs.copyFileSync(sourceGlobalCss, targetGlobalCss);
+        console.log(`✅ Copied global.css to React app: ${targetGlobalCss}`);
+      } else {
+        console.warn(`⚠️ Warning: global.css not found at ${sourceGlobalCss}`);
       }
     }
     
@@ -378,8 +396,8 @@ export default App;
     fs.writeFileSync(appJsPath, appJsContent);
     console.log(`✅ Updated App.js with React Router and all components`);
     
-    // Configure Tailwind CSS if requested
-    if (setupTailwindCSS) {
+    // Configure Tailwind CSS if requested and using modular strategy
+    if (setupTailwindCSS && strategy === STRATEGIES.MODULAR) {
       console.log(`\n🌬️ Setting up Tailwind CSS in the React app...`);
       
       // Copy Tailwind config files from output directory
@@ -441,6 +459,8 @@ export default App;
       } catch (error) {
         console.error(`⚠️ Error updating package.json with Tailwind dependencies: ${error.message}`);
       }
+    } else if (setupTailwindCSS && strategy === STRATEGIES.GLOBAL) {
+      console.log(`\n⚠️ Tailwind CSS skipped for React app: Global strategy uses consolidated CSS instead`);
     }
     
     // Update package.json to include React Router
@@ -604,9 +624,17 @@ if (require.main === module) {
   const createReactApp = args.includes('--create-app') || args.includes('-c');
   const includeComputedStyles = args.includes('--include-computed') || args.includes('-i');
   const setupTailwindCSS = args.includes('--tailwind') || args.includes('-t');
+  const useHardcodedRoutes = args.includes('--hardcoded') || args.includes('-h');
   const reactAppName = args.find((arg, i) => 
     (arg === '--app-name' || arg === '-a') && i + 1 < args.length
   ) ? args[args.findIndex(arg => arg === '--app-name' || arg === '-a') + 1] : componentName.toLowerCase() + '-app';
+  
+  // Parse strategy flag
+  const strategyArg = args.find((arg, i) => 
+    (arg === '--strategy' || arg === '-s') && i + 1 < args.length
+  ) ? args[args.findIndex(arg => arg === '--strategy' || arg === '-s') + 1] : 'modular';
+  const strategy = strategyArg.toLowerCase() === 'global' ? STRATEGIES.GLOBAL : STRATEGIES.MODULAR;
+  
   const outputDir = path.resolve(__dirname, 'output');
   
   // Check if routes.json exists
@@ -620,11 +648,27 @@ if (require.main === module) {
     reactAppName, 
     includeComputedStyles, 
     setupTailwindCSS,
+    strategy,
     outputDir
   };
 
-  // If URL is provided, always discover routes first, then process them
-  if (url) {
+  // Handle hardcoded routes flag
+  if (useHardcodedRoutes) {
+    if (!hasRoutesFile) {
+      console.error('❌ Error: --hardcoded (-h) flag requires an existing routes.json file in the output directory');
+      console.error('Create a routes.json file with your desired routes first, then run with -h flag');
+      process.exit(1);
+    }
+    console.log('🔄 Using hardcoded routes from existing routes.json (skipping route discovery)');
+    processRoutesFromJson(outputDir, options)
+      .then(() => console.log('✨ All hardcoded routes processed successfully!'))
+      .catch(err => {
+        console.error('❌ Error:', err);
+        process.exit(1);
+      });
+  }
+  // If URL is provided and NOT using hardcoded routes, discover routes first
+  else if (url) {
     console.log('🔄 Starting automated workflow with route discovery');
     
     // First, discover routes and populate routes.json
@@ -650,9 +694,24 @@ if (require.main === module) {
       });
   } else {
     console.error('❌ Error: No URL provided and no routes.json found in output directory');
-    console.error('Usage: node html-to-react.js <url> [component-name] [--create-app/-c] [--app-name/-a app-name] [--include-computed/-i] [--tailwind/-t]');
-    console.error('   OR: node html-to-react.js (with existing routes.json in output directory)');
-    console.error('Example: node html-to-react.js https://example.com MyComponent --create-app --app-name my-react-app --tailwind');
+    console.error('Usage: node html-to-react.js <url> [component-name] [OPTIONS]');
+    console.error('');
+    console.error('Options:');
+    console.error('  --create-app, -c              Create a complete React app');
+    console.error('  --app-name, -a <name>         Specify React app name');
+    console.error('  --include-computed, -i        Include computed styles');
+    console.error('  --tailwind, -t                Setup Tailwind CSS (modular strategy only)');
+    console.error('  --strategy, -s <strategy>     CSS strategy: "modular" (default) or "global"');
+    console.error('  --hardcoded, -h               Use existing routes.json instead of discovering routes');
+    console.error('');
+    console.error('CSS Strategies:');
+    console.error('  modular: Component-specific CSS files + Tailwind support (ideal for Tailwind/component-based sites)');
+    console.error('  global:  Single global.css file, no Tailwind (ideal for Webflow/monolithic CSS sites)');
+    console.error('');
+    console.error('Examples:');
+    console.error('  node html-to-react.js https://example.com MyComponent --create-app --strategy global');
+    console.error('  node html-to-react.js https://tailwind-site.com --strategy modular --tailwind');
+    console.error('  node html-to-react.js --hardcoded --strategy global --create-app  (uses existing routes.json)');
     process.exit(1);
   }
 }

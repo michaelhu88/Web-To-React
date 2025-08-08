@@ -7,12 +7,15 @@
     "start": "node scripts/extractStyles.js",
     "extract": "node src/extractors/extractStylesWithPuppeteer.js",
     "convert": "node html-to-react.js",
-    "landing": "node extract-landing-page.js"
+    "landing": "node extract-landing-page.js",
+    "frontend": "node server.js"
   },
   "dependencies": {
     "axios": "^1.6.0",
     "cheerio": "^1.0.0-rc.12",
-    "puppeteer": "^21.5.0"
+    "express": "^4.21.2",
+    "puppeteer": "^21.5.0",
+    "ws": "^8.18.3"
   },
   "keywords": [
     "css",

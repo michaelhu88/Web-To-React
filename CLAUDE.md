@@ -26,6 +26,7 @@ node html-to-react.js <URL> [component-name] [options]
 - `--create-app` or `-c`: Create a complete React app
 - `--app-name` or `-a <name>`: Specify React app name
 - `--include-computed` or `-i`: Include computed styles
+- `--strategy` or `-s <strategy>`: CSS processing strategy (`modular` or `global`)
 
 
 ## Core Architecture
@@ -55,13 +56,48 @@ node html-to-react.js <URL> [component-name] [options]
 - `convertHTMLtoJSX.js` - Converts HTML to JSX with proper React attributes and image imports
 
 #### Processors (`src/processors/`)
-- `processRoute.js` - Orchestrates the entire conversion process for a single route
+- `processRouteModular.js` - Component-specific CSS strategy (ideal for Tailwind/component-based sites)
+- `processRouteGlobal.js` - Global CSS strategy (ideal for Webflow/monolithic CSS sites)
+- `index.js` - Processor factory for strategy selection
+
+## CSS Processing Strategies
+
+The tool supports two CSS processing strategies to handle different types of websites:
+
+### Modular Strategy (Default) - `--strategy modular`
+**Best for:** Tailwind CSS, component-based sites, modern CSS frameworks
+
+**Characteristics:**
+- Each page component has its own CSS files (4 files per component)
+- Component-specific asset directories  
+- CSS imports: `ComponentName.css`, `App.css`, `font-faces.css`, `custom-vars.css`
+- **Tailwind CSS support**: Automatically includes Tailwind dependencies in final React project
+- Ideal for sites where styles are component-scoped
+
+**Example:**
+```bash
+node html-to-react.js https://tailwind-site.com --strategy modular --tailwind
+```
+
+### Global Strategy - `--strategy global`  
+**Best for:** Webflow sites, monolithic CSS, traditional websites with large global stylesheets
+
+**Characteristics:**
+- Single `src/shared/global.css` file containing ALL styles from all pages
+- Page-specific asset directories maintained (no asset conflicts)
+- Each component imports: `../../shared/global.css`
+- CSS automatically consolidated and deduplicated
+- **No Tailwind CSS**: `--tailwind` flag is ignored for global strategy
+- Ideal for sites with large, shared stylesheets
+
+**Example:**
+```bash
+node html-to-react.js https://webflow-site.com --strategy global --create-app
+```
 
 ## Directory Structure
 
-### Output Organization
-The tool creates a modular structure where each page gets its own directory:
-
+### Modular Strategy Output
 ```
 output/
 ├── html/                          # Raw HTML files
@@ -72,14 +108,28 @@ output/
 │       │   ├── App.css             # Inline styles
 │       │   ├── font-faces.css      # Font definitions
 │       │   ├── custom-vars.css     # CSS custom properties
-│       │   ├── images-flat/        # All images for this component
-│       │   └── fonts-flat/         # All fonts for this component
-│       └── ComponentName.jsx       # React component
+│       │   ├── images-flat/        # Page-specific images
+│       │   └── fonts-flat/         # Page-specific fonts
+│       └── ComponentName.jsx       # React component (imports 4 CSS files)
 ├── routes.json                    # Discovered routes configuration
 └── package.json                   # Generated React project config
 ```
 
-### Key Features
+### Global Strategy Output
+```
+output/
+├── html/                          # Raw HTML files  
+├── src/
+│   ├── pages/
+│   │   ├── ComponentName/
+│   │   │   ├── images-flat/        # Page-specific images
+│   │   │   └── fonts-flat/         # Page-specific fonts
+│   │   └── ComponentName.jsx       # React component (imports global.css)
+│   └── shared/
+│       └── global.css             # Consolidated CSS from all pages
+├── routes.json                    # Discovered routes configuration
+└── package.json                   # Generated React project config
+## Key Features
 
 #### Asset Management
 - **Images**: Automatically downloaded, sanitized filenames, converted to ES6 imports

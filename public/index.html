@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web-to-React Converter</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Web-to-React Converter</h1>
+            <p>Transform any website into a React project with a single click</p>
+        </header>
+
+        <main>
+            <form id="convertForm" class="convert-form">
+                <div class="input-group">
+                    <label for="url">Website URL</label>
+                    <input 
+                        type="url" 
+                        id="url" 
+                        name="url" 
+                        placeholder="https://example.com"
+                        required
+                    >
+                </div>
+                
+                <button type="submit" id="convertBtn" class="convert-btn">
+                    <span class="btn-text">Convert to React</span>
+                    <span class="loading-spinner" style="display: none;">
+                        <div class="spinner"></div>
+                        Converting...
+                    </span>
+                </button>
+            </form>
+
+            <!-- Status/Result Display -->
+            <div id="statusContainer" class="status-container" style="display: none;">
+                <div id="statusMessage" class="status-message"></div>
+                <div id="progressContainer" class="progress-container">
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Display -->
+            <div id="resultsContainer" class="results-container" style="display: none;">
+                <h3>✅ Conversion Completed!</h3>
+                <div id="resultsContent" class="results-content"></div>
+            </div>
+        </main>
+
+        <footer>
+            <p>
+                Built with ❤️ using Node.js + Express + Puppeteer
+                <br>
+                <small>Converts websites to React components with automatic route discovery</small>
+            </p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

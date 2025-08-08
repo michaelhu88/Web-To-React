@@ -288,6 +288,14 @@ async function findFirstLevelRoutes(
           console.log(`⛔ Skipping deeply nested URL: ${element.href} (${nestingLevels} levels)`);
           continue;
         }
+        
+        // Blacklist specific routes (401 and 402 pages)
+        const urlPath = element.href.toLowerCase();
+        if (urlPath.includes('/401') || urlPath.includes('/402') || 
+            urlPath.includes('401') || urlPath.includes('402')) {
+          console.log(`⛔ Skipping blacklisted route: ${element.href}`);
+          continue;
+        }
       }
       
       // For each element, create a new page so we don't lose our place
@@ -338,16 +346,23 @@ async function findFirstLevelRoutes(
           
           // Only include URLs from the same domain
           if (parsedUrl.hostname === parsedStartUrl.hostname) {
-            const componentName = getComponentNameFromUrl(normalizedCurrentUrl);
-            console.log(`✅ Discovered route: ${componentName} -> ${normalizedCurrentUrl}`);
-            
-            // Add to routes array if not already present
-            const alreadyExists = routes.some(route => normalizeUrl(route.url) === normalizedCurrentUrl);
-            if (!alreadyExists) {
-              routes.push({
-                url: normalizedCurrentUrl,
-                componentName
-              });
+            // Blacklist specific routes (401 and 402 pages)
+            const urlPath = normalizedCurrentUrl.toLowerCase();
+            if (urlPath.includes('/401') || urlPath.includes('/402') || 
+                urlPath.includes('401') || urlPath.includes('402')) {
+              console.log(`⛔ Skipping blacklisted discovered route: ${normalizedCurrentUrl}`);
+            } else {
+              const componentName = getComponentNameFromUrl(normalizedCurrentUrl);
+              console.log(`✅ Discovered route: ${componentName} -> ${normalizedCurrentUrl}`);
+              
+              // Add to routes array if not already present
+              const alreadyExists = routes.some(route => normalizeUrl(route.url) === normalizedCurrentUrl);
+              if (!alreadyExists) {
+                routes.push({
+                  url: normalizedCurrentUrl,
+                  componentName
+                });
+              }
             }
           }
           
