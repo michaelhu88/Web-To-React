@@ -316,28 +316,17 @@ function convertAttributes(attrs) {
         // Convert other namespaced attributes to camelCase
         jsxKey = `${namespace}${attr.charAt(0).toUpperCase()}${attr.slice(1)}`;
       }
+    } else if (keyLower.startsWith("aria-") || keyLower.startsWith("data-")) {
+      // Keep aria-* and data-* attributes exactly as-is
+      jsxKey = key;
     } else if (attributeRenameMap[keyLower]) {
       jsxKey = attributeRenameMap[keyLower];
-    } else if (keyLower.startsWith("on")) {
+    } else if (keyLower.startsWith("on") && /^on[a-z]/i.test(keyLower)) {
       jsxKey = toJSXEventName(keyLower);
-    } else if (keyLower.includes('-')) {
-      // Convert hyphenated attributes to camelCase (especially for SVG)
-      jsxKey = keyLower.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
     } else {
       jsxKey = key;
     }
 
-    if (keyLower === "data-props" || keyLower.startsWith("data-")) {
-      try {
-        const parsed = JSON.parse(value);
-        const escapedValue = JSON.stringify(parsed).replace(/"/g, '&quot;');
-        jsx += ` ${jsxKey}="${escapedValue}"`;
-      } catch (e) {
-        const escapedValue = value.replace(/"/g, '&quot;');
-        jsx += ` ${jsxKey}="${escapedValue}"`;
-      }
-      continue;
-    }
 
     // Fix src attributes that have absolute paths
     let attributeValue = value;
@@ -349,18 +338,14 @@ function convertAttributes(attrs) {
     if (typeof attributeValue === 'string' && attributeValue.startsWith('{') && attributeValue.endsWith('}')) {
       // Output without quotes for JSX expressions
       jsx += ` ${jsxKey}=${attributeValue}`;
-    } else if (booleanAttributes.has(keyLower)) {
-      if (value === "" || value === keyLower || value === true) {
-        jsx += ` ${jsxKey}={true}`;
-      } else if (value === "false" || value === false) {
-        jsx += ` ${jsxKey}={false}`;
-      } else if (isBooleanValue(value)) {
-        // Handle "true" and "false" strings as actual booleans in JSX
-        jsx += ` ${jsxKey}={${value.toLowerCase()}}`;
-      } else {
-        jsx += ` ${jsxKey}="${attributeValue}"`;
-      }
+    } else if (booleanAttributes.has(keyLower) && (value === "true" || value === "false")) {
+      // Only unquote pure boolean tokens for boolean attributes
+      jsx += ` ${jsxKey}={${value.toLowerCase()}}`;
+    } else if (!keyLower.startsWith("aria-") && !keyLower.startsWith("data-") && /^\d+$/.test(String(value))) {
+      // Only unquote pure numeric values, but not for aria-* or data-* attributes
+      jsx += ` ${jsxKey}={${value}}`;
     } else {
+      // Default to quoted strings for everything else
       const escapedValue = attributeValue.replace(/"/g, '&quot;');
       jsx += ` ${jsxKey}="${escapedValue}"`;
     }
@@ -647,18 +632,10 @@ function convertHTMLtoJSX(html) {
 
   // Clean up any React-incompatible attributes that might have been missed
   output = output
-    // Convert inline event handlers
-    .replace(/on([a-z]+)="([^"]*)"/gi, (_, event, handler) => {
-      const jsxEvent = `on${event.charAt(0).toUpperCase()}${event.slice(1)}`;
-      return `${jsxEvent}={() => { ${handler} }}`;
-    })
-    // Convert any remaining hyphenated attributes to camelCase (especially for SVG)
-    .replace(/\s([a-z-]+)-([a-z-]+)="([^"]*)"/gi, (_, prefix, suffix, value) => {
-      // Skip data- attributes
-      if (prefix === 'data') return match;
-      
-      const camelCaseName = `${prefix}${suffix.charAt(0).toUpperCase()}${suffix.slice(1)}`;
-      return ` ${camelCaseName}="${value}"`;
+    // Convert inline event handlers (only attributes matching /^on[a-z]/i pattern)
+    .replace(/\s(on[a-z][a-zA-Z]*)="([^"]*)"/gi, (match, attr, handler) => {
+      const jsxEvent = attr.replace(/^on([a-z])/, (_, c) => `on${c.toUpperCase()}`);
+      return ` ${jsxEvent}={() => { ${handler} }}`;
     })
     // Convert class attributes that might have been missed
     .replace(/\sclass="/g, ' className="')

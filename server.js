@@ -30,8 +30,20 @@ function generateProjectNames(url) {
         const domainParts = domain.split('.');
         let mainDomain = domainParts[0];
         
-        // Capitalize first letter and make it a valid component name
-        const projectName = mainDomain.charAt(0).toUpperCase() + mainDomain.slice(1).toLowerCase();
+        // Handle special cases for better naming
+        const specialCases = {
+            'github': 'GitHub',
+            'stackoverflow': 'StackOverflow', 
+            'linkedin': 'LinkedIn',
+            'youtube': 'YouTube',
+            'instagram': 'Instagram',
+            'facebook': 'Facebook',
+            'huggingface': 'HuggingFace'
+        };
+        
+        // Use special case if available, otherwise capitalize normally
+        const projectName = specialCases[mainDomain.toLowerCase()] || 
+                           mainDomain.charAt(0).toUpperCase() + mainDomain.slice(1).toLowerCase();
         
         // Generate app name (lowercase, sanitized)
         const appName = mainDomain.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -308,9 +320,9 @@ app.post('/api/convert', async (req, res) => {
             appName
         });
         
-        // Start the conversion process asynchronously
+        // Start the conversion process asynchronously - with dynamic route discovery
         const command = 'node';
-        const args = ['html-to-react.js', url, projectName, '--create-app', '--app-name', appName, '-h'];
+        const args = ['html-to-react.js', url, projectName, '--create-app', '--app-name', appName];
         
         console.log(`Executing: ${command} ${args.join(' ')}`);
         
